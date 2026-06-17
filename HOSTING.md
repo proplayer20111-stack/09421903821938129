@@ -75,7 +75,7 @@ Use that URL on both PC and phone. Phone mic should work better there because it
 
 - Free Render services can sleep. First load may take a bit.
 - Accounts are stored in JSON files. On free hosting, data may reset after redeploys or server resets unless you add persistent storage.
-- Chat stickers work without setup. Live GIF search needs `GIPHY_API_KEY`; without it, the GIF panel falls back to built-in stickers.
+- Live GIF search needs `GIPHY_API_KEY`; without it, the GIF panel shows that GIPHY is not active yet.
 - The next serious upgrade should be a database for permanent accounts and admin rules.
 
 ## Local Testing

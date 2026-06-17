@@ -97,9 +97,11 @@ const state = {
   activeKickTargetId: "",
   longPressTimer: null,
   mediaUploading: false,
-  gifMode: "gif",
   gifLoading: false,
   giphyApiKey: null,
+  gifQuery: "reaction",
+  gifOffset: 0,
+  gifHasMore: true,
   notificationContext: null,
   notificationWanted: false,
   heartbeatTimer: null,
@@ -124,17 +126,6 @@ const state = {
 const rtcConfig = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
 };
-
-const fallbackStickers = [
-  { title: "blue fire", text: "fire", emoji: "🔥", color: "#2563eb" },
-  { title: "purple spark", text: "spark", emoji: "✨", color: "#7c3aed" },
-  { title: "clean win", text: "W", emoji: "W", color: "#16a34a" },
-  { title: "bruh", text: "bruh", emoji: "bruh", color: "#dc2626" },
-  { title: "laugh", text: "laugh", emoji: "LOL", color: "#ea580c" },
-  { title: "ok", text: "ok", emoji: "OK", color: "#0ea5e9" },
-  { title: "gg", text: "gg", emoji: "GG", color: "#be185d" },
-  { title: "nah", text: "nah", emoji: "nah", color: "#64748b" }
-];
 
 siteButton.addEventListener("click", enterSite);
 sitePassword.addEventListener("keydown", (event) => {
@@ -197,11 +188,12 @@ gifSearch.addEventListener("keydown", (event) => {
   }
 });
 gifPanel.addEventListener("click", (event) => {
-  const modeButton = event.target.closest("[data-gif-mode]");
-  if (modeButton) setGifMode(modeButton.dataset.gifMode);
-
-  const item = event.target.closest("[data-gif-url], [data-sticker-text]");
+  const item = event.target.closest("[data-gif-url]");
   if (item) sendGifItem(item);
+});
+gifGrid.addEventListener("scroll", () => {
+  const nearBottom = gifGrid.scrollTop + gifGrid.clientHeight >= gifGrid.scrollHeight - 80;
+  if (nearBottom && state.gifHasMore && !state.gifLoading) searchGifs(true);
 });
 volumeSlider.addEventListener("input", () => setPeerVolume(state.activeVolumePeerId, Number(volumeSlider.value) / 100));
 volumeDown.addEventListener("click", () => bumpPeerVolume(-0.1));
@@ -1045,7 +1037,7 @@ async function handleSignal(message) {
   if (message.type === "chat") {
     addChatBubble(message);
     if (message.from !== state.id) {
-      const chatKind = message.kind === "gif" ? "sent a GIF" : message.kind === "sticker" ? "sent a sticker" : message.kind === "media" ? "sent media" : message.text || "sent a message";
+      const chatKind = message.kind === "gif" ? "sent a GIF" : message.kind === "media" ? "sent media" : message.text || "sent a message";
       notifyUser(message.profile?.name || message.name || "New message", chatKind, "chat");
     }
     return;
@@ -1721,49 +1713,48 @@ async function uploadChatMedia() {
 function toggleGifPanel() {
   gifPanel.hidden = !gifPanel.hidden;
   if (!gifPanel.hidden) {
-    if (!gifGrid.children.length) renderFallbackStickers("loading GIF setup...");
+    if (!gifGrid.children.length) renderGifEmpty("loading GIF setup...");
     refreshGifConfig();
   }
 }
 
-function setGifMode(mode) {
-  state.gifMode = mode === "sticker" ? "sticker" : "gif";
-  gifPanel.querySelectorAll("[data-gif-mode]").forEach((button) => {
-    button.classList.toggle("active", button.dataset.gifMode === state.gifMode);
-  });
-  if (state.gifMode === "sticker") renderFallbackStickers("Built-in stickers work without an API key.");
-}
-
-async function searchGifs() {
+async function searchGifs(append = false) {
   if (state.gifLoading) return;
-  const query = gifSearch.value.trim();
-  if (!query && state.gifMode === "sticker") {
-    renderFallbackStickers("Built-in stickers work without an API key.");
+  const query = gifSearch.value.trim() || "reaction";
+  if (!append) {
+    state.gifQuery = query;
+    state.gifOffset = 0;
+    state.gifHasMore = true;
+    gifGrid.textContent = "";
+  } else if (!state.gifHasMore) {
     return;
   }
 
   state.gifLoading = true;
   gifSearchButton.disabled = true;
   gifSearchButton.textContent = "wait";
-  gifGrid.textContent = "";
-  gifNote.textContent = "searching...";
+  gifNote.textContent = append ? "loading more..." : "searching...";
 
   try {
     const key = await getGiphyApiKey();
     if (!key) throw new Error("GIPHY key is not active on this service yet. Redeploy or restart Render after adding it.");
-    const type = state.gifMode === "sticker" ? "stickers" : "gifs";
-    const endpoint = new URL(`https://api.giphy.com/v1/${type}/search`);
+    const endpoint = new URL("https://api.giphy.com/v1/gifs/search");
     endpoint.searchParams.set("api_key", key);
-    endpoint.searchParams.set("q", query || "reaction");
-    endpoint.searchParams.set("limit", "12");
+    endpoint.searchParams.set("q", state.gifQuery);
+    endpoint.searchParams.set("limit", "24");
+    endpoint.searchParams.set("offset", String(state.gifOffset));
     endpoint.searchParams.set("rating", "pg");
     endpoint.searchParams.set("bundle", "messaging_non_clips");
     const response = await fetch(endpoint);
     const result = await response.json();
     if (!response.ok) throw new Error(result.meta?.msg || "gif search failed");
-    renderGifResults(giphyItems(result.data || []), "giphy");
+    const items = giphyItems(result.data || []);
+    state.gifOffset += items.length;
+    state.gifHasMore = items.length > 0 && state.gifOffset < (result.pagination?.total_count || state.gifOffset + 1);
+    renderGifResults(items, "giphy", append);
   } catch (error) {
-    renderFallbackStickers(error.message || "GIF search needs an API key.");
+    if (append) gifNote.textContent = error.message || "Could not load more GIFs.";
+    else renderGifEmpty(error.message || "GIF search needs an API key.");
   } finally {
     state.gifLoading = false;
     gifSearchButton.disabled = false;
@@ -1788,12 +1779,13 @@ async function refreshGifConfig() {
   try {
     const key = await getGiphyApiKey();
     if (key) {
-      gifNote.textContent = "GIPHY connected. Search and tap a GIF to send.";
+      gifNote.textContent = "GIPHY connected. Search and scroll GIFs.";
+      if (!gifGrid.querySelector("[data-gif-url]")) searchGifs(false);
       return;
     }
-    renderFallbackStickers("GIPHY key is not active yet. Built-in stickers still work.");
+    renderGifEmpty("GIPHY key is not active yet. Redeploy or restart Render.");
   } catch (error) {
-    renderFallbackStickers(error.message || "GIF setup failed. Built-in stickers still work.");
+    renderGifEmpty(error.message || "GIF setup failed.");
   }
 }
 
@@ -1810,10 +1802,11 @@ function giphyItems(items) {
   }).filter((item) => item.url.startsWith("https://"));
 }
 
-function renderGifResults(items, provider) {
-  gifGrid.textContent = "";
+function renderGifResults(items, provider, append = false) {
+  if (!append) gifGrid.textContent = "";
   if (!items.length) {
-    renderFallbackStickers("No GIFs found. Try stickers.");
+    if (!append) renderGifEmpty("No GIFs found. Try another search.");
+    else gifNote.textContent = "No more GIFs.";
     return;
   }
 
@@ -1834,42 +1827,28 @@ function renderGifResults(items, provider) {
     gifGrid.append(button);
   }
 
-  gifNote.textContent = provider === "giphy" ? "Powered by GIPHY" : "";
+  gifNote.textContent = provider === "giphy" ? (state.gifHasMore ? "Powered by GIPHY - scroll for more" : "Powered by GIPHY - end") : "";
 }
 
-function renderFallbackStickers(note = "") {
+function renderGifEmpty(note = "") {
   gifGrid.textContent = "";
-  for (const sticker of fallbackStickers) {
-    const button = document.createElement("button");
-    button.className = "gif-item sticker-item";
-    button.type = "button";
-    button.dataset.stickerText = sticker.text;
-    button.dataset.stickerEmoji = sticker.emoji;
-    button.dataset.stickerColor = sticker.color;
-    button.title = sticker.title;
-    button.style.setProperty("--sticker-color", sticker.color);
-    button.textContent = sticker.emoji;
-    gifGrid.append(button);
-  }
+  const empty = document.createElement("div");
+  empty.className = "gif-empty";
+  empty.textContent = "No GIFs";
+  gifGrid.append(empty);
   gifNote.textContent = note;
 }
 
 async function sendGifItem(item) {
   if (state.mediaUploading) return;
-  const body = item.dataset.gifUrl
-    ? {
-        kind: "gif",
-        mediaUrl: item.dataset.gifUrl,
-        previewUrl: item.dataset.gifPreview || item.dataset.gifUrl,
-        title: item.dataset.gifTitle || "gif",
-        provider: item.dataset.gifProvider || "giphy"
-      }
-    : {
-        kind: "sticker",
-        stickerText: item.dataset.stickerText || "sticker",
-        stickerEmoji: item.dataset.stickerEmoji || "spark",
-        stickerColor: item.dataset.stickerColor || "#2563eb"
-      };
+  if (!item.dataset.gifUrl) return;
+  const body = {
+    kind: "gif",
+    mediaUrl: item.dataset.gifUrl,
+    previewUrl: item.dataset.gifPreview || item.dataset.gifUrl,
+    title: item.dataset.gifTitle || "gif",
+    provider: item.dataset.gifProvider || "giphy"
+  };
 
   state.mediaUploading = true;
   try {
@@ -1897,13 +1876,13 @@ async function sendGifItem(item) {
 function addChatBubble(message) {
   if (message.id && state.chatIds.has(message.id)) return;
   const age = message.createdAt ? Date.now() - Date.parse(message.createdAt) : 0;
-  const ttl = ["media", "gif", "sticker"].includes(message.kind) ? 12 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+  const ttl = ["media", "gif"].includes(message.kind) ? 12 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
   if (age > ttl) return;
   if (message.id) state.chatIds.add(message.id);
 
   const mine = message.from === state.id;
   const row = document.createElement("div");
-  const richMessage = ["media", "gif", "sticker"].includes(message.kind);
+  const richMessage = ["media", "gif"].includes(message.kind);
   row.className = `chat-entry${mine ? " mine" : ""}${richMessage ? " media-entry" : ""}`;
 
   const avatar = document.createElement("div");
@@ -1920,8 +1899,6 @@ function addChatBubble(message) {
 
   if ((message.kind === "media" || message.kind === "gif") && message.mediaUrl) {
     appendChatMedia(bubble, message);
-  } else if (message.kind === "sticker") {
-    appendSticker(bubble, message);
   } else {
     appendLinkedText(bubble, message.text || "");
   }
@@ -1945,14 +1922,6 @@ function appendChatMedia(parent, message) {
   }
 
   parent.append(media);
-}
-
-function appendSticker(parent, message) {
-  const sticker = document.createElement("div");
-  sticker.className = "chat-sticker";
-  sticker.style.setProperty("--sticker-color", sanitizeColor(message.stickerColor));
-  sticker.textContent = message.stickerEmoji || message.stickerText || "spark";
-  parent.append(sticker);
 }
 
 function appendLinkedText(parent, text) {
@@ -2185,10 +2154,6 @@ function sanitizeStatus(status) {
   return String(status || "online").trim().slice(0, 40) || "online";
 }
 
-function sanitizeColor(color) {
-  const value = String(color || "").trim();
-  return /^#[0-9a-f]{6}$/i.test(value) ? value : "#2563eb";
-}
 
 function initials(name) {
   return (sanitizeName(name) || "caller")

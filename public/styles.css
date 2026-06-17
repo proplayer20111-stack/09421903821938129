@@ -630,20 +630,6 @@ select:focus {
   cursor: default;
 }
 
-.chat-sticker {
-  min-width: 74px;
-  min-height: 56px;
-  display: grid;
-  place-items: center;
-  padding: 10px;
-  color: white;
-  background: linear-gradient(135deg, var(--sticker-color), color-mix(in srgb, var(--sticker-color) 70%, white));
-  border-radius: 18px;
-  font-size: 22px;
-  font-weight: bold;
-  animation: sticker-bounce 260ms cubic-bezier(0.2, 0.9, 0.2, 1.2);
-}
-
 .gif-panel {
   padding: 10px;
   margin-bottom: 10px;
@@ -651,8 +637,7 @@ select:focus {
   animation: panel-in 160ms ease-out;
 }
 
-.gif-search-row,
-.gif-tabs {
+.gif-search-row {
   display: flex;
   gap: 8px;
   margin-bottom: 8px;
@@ -663,16 +648,14 @@ select:focus {
   min-width: 0;
 }
 
-.gif-tabs .active {
-  color: white;
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
 .gif-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
+  max-height: clamp(220px, 34vh, 440px);
+  overflow-y: auto;
+  padding-right: 4px;
+  scroll-behavior: smooth;
 }
 
 .gif-item {
@@ -690,12 +673,14 @@ select:focus {
   object-fit: cover;
 }
 
-.sticker-item {
+.gif-empty {
+  grid-column: 1 / -1;
+  min-height: 120px;
   display: grid;
   place-items: center;
-  color: white;
-  background: linear-gradient(135deg, var(--sticker-color), color-mix(in srgb, var(--sticker-color) 62%, white));
-  font-size: 20px;
+  color: var(--muted);
+  border: 1px dashed var(--line-soft);
+  border-radius: 15px;
   font-weight: bold;
 }
 
@@ -818,22 +803,6 @@ select:focus {
   100% {
     opacity: 1;
     transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes sticker-bounce {
-  0% {
-    opacity: 0;
-    transform: rotate(-2deg) scale(0.82);
-  }
-
-  70% {
-    transform: rotate(1deg) scale(1.08);
-  }
-
-  100% {
-    opacity: 1;
-    transform: rotate(0) scale(1);
   }
 }
 

@@ -734,15 +734,6 @@ function sanitizeHttpsUrl(value) {
   return parsed.toString();
 }
 
-function sanitizeStickerText(value) {
-  return String(value || "sticker").trim().slice(0, 20) || "sticker";
-}
-
-function sanitizeStickerColor(value) {
-  const color = String(value || "").trim();
-  return /^#[0-9a-f]{6}$/i.test(color) ? color : "#2563eb";
-}
-
 function sanitizeKickReason(text) {
   return String(text || "No reason").trim().slice(0, 140) || "No reason";
 }
@@ -821,10 +812,9 @@ async function handleGifSend(req, res, url) {
   try {
     const payload = await readJson(req);
     const profile = normalizeProfile(auth.account.profile || { name: auth.username });
-    const kind = payload.kind === "sticker" ? "sticker" : "gif";
     const chat = {
       type: "chat",
-      kind,
+      kind: "gif",
       id: crypto.randomUUID(),
       from: String(url.searchParams.get("clientId") || auth.username).slice(0, 80),
       username: auth.username,
@@ -835,17 +825,11 @@ async function handleGifSend(req, res, url) {
       createdAt: new Date(now).toISOString()
     };
 
-    if (kind === "gif") {
-      chat.mediaUrl = sanitizeHttpsUrl(payload.mediaUrl);
-      chat.previewUrl = sanitizeHttpsUrl(payload.previewUrl || payload.mediaUrl);
-      chat.mediaType = "image/gif";
-      chat.title = String(payload.title || "gif").trim().slice(0, 80) || "gif";
-      chat.provider = String(payload.provider || "giphy").trim().slice(0, 30) || "giphy";
-    } else {
-      chat.stickerText = sanitizeStickerText(payload.stickerText);
-      chat.stickerEmoji = sanitizeStickerText(payload.stickerEmoji || payload.stickerText);
-      chat.stickerColor = sanitizeStickerColor(payload.stickerColor);
-    }
+    chat.mediaUrl = sanitizeHttpsUrl(payload.mediaUrl);
+    chat.previewUrl = sanitizeHttpsUrl(payload.previewUrl || payload.mediaUrl);
+    chat.mediaType = "image/gif";
+    chat.title = String(payload.title || "gif").trim().slice(0, 80) || "gif";
+    chat.provider = String(payload.provider || "giphy").trim().slice(0, 30) || "giphy";
 
     mediaCooldowns.set(auth.username, now);
     chatMessages.push(chat);
@@ -1351,7 +1335,7 @@ function pruneChatMessages() {
   for (let index = chatMessages.length - 1; index >= 0; index -= 1) {
     const message = chatMessages[index];
     const created = Date.parse(message.createdAt) || now;
-    const ttl = ["media", "gif", "sticker"].includes(message.kind) ? MEDIA_TTL_MS : CHAT_TTL_MS;
+    const ttl = ["media", "gif"].includes(message.kind) ? MEDIA_TTL_MS : CHAT_TTL_MS;
     if (created < now - ttl) {
       chatMessages.splice(index, 1);
     }
