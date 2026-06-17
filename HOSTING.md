@@ -55,6 +55,8 @@ If Git asks you to sign in, follow the browser sign-in prompt.
 7. Add an environment variable:
    - Key: `SITE_PASSWORD`
    - Value: your private site password
+   - Optional key: `GIPHY_API_KEY`
+   - Optional value: a GIPHY developer API key, only needed for live GIF search
 8. Click deploy.
 9. Wait until Render says the service is live.
 
@@ -72,6 +74,7 @@ Use that URL on both PC and phone. Phone mic should work better there because it
 
 - Free Render services can sleep. First load may take a bit.
 - Accounts are stored in JSON files. On free hosting, data may reset after redeploys or server resets unless you add persistent storage.
+- Chat stickers work without setup. Live GIF search needs `GIPHY_API_KEY`; without it, the GIF panel falls back to built-in stickers.
 - The next serious upgrade should be a database for permanent accounts and admin rules.
 
 ## Local Testing

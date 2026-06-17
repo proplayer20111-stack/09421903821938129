@@ -37,6 +37,7 @@ const MEDIA_COOLDOWN_MS = 30 * 1000;
 const DEVICE_TIMEOUT_MS = 3 * 60 * 1000;
 const KICK_MAX_MS = 3 * 60 * 1000;
 const KICK_VOTE_TTL_MS = 45 * 1000;
+const GIPHY_API_KEY = process.env.GIPHY_API_KEY || "";
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -131,6 +132,18 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/upload-media") {
     if (!requireSiteAccess(req, res)) return;
     await handleMediaUpload(req, res, url);
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/gif-config") {
+    if (!requireSiteAccess(req, res)) return;
+    sendJson(res, 200, { giphyApiKey: GIPHY_API_KEY });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/send-gif") {
+    if (!requireSiteAccess(req, res)) return;
+    await handleGifSend(req, res, url);
     return;
   }
 
@@ -710,6 +723,22 @@ function sanitizeChat(text) {
   return String(text || "").trim().slice(0, 500);
 }
 
+function sanitizeHttpsUrl(value) {
+  const raw = String(value || "").trim().slice(0, 700);
+  const parsed = new URL(raw);
+  if (parsed.protocol !== "https:") throw new Error("GIF URL must be HTTPS.");
+  return parsed.toString();
+}
+
+function sanitizeStickerText(value) {
+  return String(value || "sticker").trim().slice(0, 20) || "sticker";
+}
+
+function sanitizeStickerColor(value) {
+  const color = String(value || "").trim();
+  return /^#[0-9a-f]{6}$/i.test(color) ? color : "#2563eb";
+}
+
 function sanitizeKickReason(text) {
   return String(text || "No reason").trim().slice(0, 140) || "No reason";
 }
@@ -770,6 +799,57 @@ async function handleMediaUpload(req, res, url) {
     sendJson(res, tooLarge ? 413 : badUpload ? 400 : 500, {
       error: tooLarge ? "That file is too large." : error.message || "Could not upload to Catbox."
     });
+  }
+}
+
+async function handleGifSend(req, res, url) {
+  const auth = requireAccount(req, res);
+  if (!auth) return;
+
+  const now = Date.now();
+  const lastUpload = mediaCooldowns.get(auth.username) || 0;
+  if (!auth.account.isAdmin && now - lastUpload < MEDIA_COOLDOWN_MS) {
+    const waitSeconds = Math.ceil((MEDIA_COOLDOWN_MS - (now - lastUpload)) / 1000);
+    sendJson(res, 429, { error: `wait ${waitSeconds}s before another media upload`, waitSeconds });
+    return;
+  }
+
+  try {
+    const payload = await readJson(req);
+    const profile = normalizeProfile(auth.account.profile || { name: auth.username });
+    const kind = payload.kind === "sticker" ? "sticker" : "gif";
+    const chat = {
+      type: "chat",
+      kind,
+      id: crypto.randomUUID(),
+      from: String(url.searchParams.get("clientId") || auth.username).slice(0, 80),
+      username: auth.username,
+      name: profile.name,
+      profile,
+      text: "",
+      expiresAt: new Date(now + MEDIA_TTL_MS).toISOString(),
+      createdAt: new Date(now).toISOString()
+    };
+
+    if (kind === "gif") {
+      chat.mediaUrl = sanitizeHttpsUrl(payload.mediaUrl);
+      chat.previewUrl = sanitizeHttpsUrl(payload.previewUrl || payload.mediaUrl);
+      chat.mediaType = "image/gif";
+      chat.title = String(payload.title || "gif").trim().slice(0, 80) || "gif";
+      chat.provider = String(payload.provider || "giphy").trim().slice(0, 30) || "giphy";
+    } else {
+      chat.stickerText = sanitizeStickerText(payload.stickerText);
+      chat.stickerEmoji = sanitizeStickerText(payload.stickerEmoji || payload.stickerText);
+      chat.stickerColor = sanitizeStickerColor(payload.stickerColor);
+    }
+
+    mediaCooldowns.set(auth.username, now);
+    chatMessages.push(chat);
+    pruneChatMessages();
+    broadcastPresence(chat);
+    sendJson(res, 200, { chat, cooldownSeconds: auth.account.isAdmin ? 0 : 30 });
+  } catch (error) {
+    sendJson(res, 400, { error: error.message || "could not send GIF" });
   }
 }
 
@@ -1267,7 +1347,7 @@ function pruneChatMessages() {
   for (let index = chatMessages.length - 1; index >= 0; index -= 1) {
     const message = chatMessages[index];
     const created = Date.parse(message.createdAt) || now;
-    const ttl = message.kind === "media" ? MEDIA_TTL_MS : CHAT_TTL_MS;
+    const ttl = ["media", "gif", "sticker"].includes(message.kind) ? MEDIA_TTL_MS : CHAT_TTL_MS;
     if (created < now - ttl) {
       chatMessages.splice(index, 1);
     }

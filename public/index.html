@@ -144,8 +144,21 @@
           <aside class="chat-panel">
             <h2>Chat</h2>
             <div class="chat-log" id="chatLog"></div>
+            <div class="gif-panel" id="gifPanel" hidden>
+              <div class="gif-search-row">
+                <input id="gifSearch" maxlength="40" placeholder="search gifs">
+                <button class="small" id="gifSearchButton" type="button">search</button>
+              </div>
+              <div class="gif-tabs">
+                <button class="small active" id="gifTabButton" type="button" data-gif-mode="gif">gifs</button>
+                <button class="small" type="button" data-gif-mode="sticker">stickers</button>
+              </div>
+              <div class="gif-grid" id="gifGrid"></div>
+              <div class="gif-note" id="gifNote"></div>
+            </div>
             <form class="chat-form" id="chatForm">
               <button class="small icon-button" id="mediaButton" type="button" title="upload media">+</button>
+              <button class="small icon-button" id="gifButton" type="button" title="gifs and stickers">gif</button>
               <input id="mediaFile" type="file" accept="image/*,video/*" hidden>
               <input id="chatInput" maxlength="500" placeholder="message or link">
               <button class="blue" type="submit">send</button>

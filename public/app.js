@@ -44,6 +44,12 @@ const chatForm = $("#chatForm");
 const chatInput = $("#chatInput");
 const mediaButton = $("#mediaButton");
 const mediaFile = $("#mediaFile");
+const gifButton = $("#gifButton");
+const gifPanel = $("#gifPanel");
+const gifSearch = $("#gifSearch");
+const gifSearchButton = $("#gifSearchButton");
+const gifGrid = $("#gifGrid");
+const gifNote = $("#gifNote");
 const volumeMenu = $("#volumeMenu");
 const volumeTitle = $("#volumeTitle");
 const volumeSlider = $("#volumeSlider");
@@ -91,6 +97,9 @@ const state = {
   activeKickTargetId: "",
   longPressTimer: null,
   mediaUploading: false,
+  gifMode: "gif",
+  gifLoading: false,
+  giphyApiKey: null,
   notificationContext: null,
   notificationWanted: false,
   heartbeatTimer: null,
@@ -115,6 +124,17 @@ const state = {
 const rtcConfig = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
 };
+
+const fallbackStickers = [
+  { title: "blue fire", text: "fire", emoji: "🔥", color: "#2563eb" },
+  { title: "purple spark", text: "spark", emoji: "✨", color: "#7c3aed" },
+  { title: "clean win", text: "W", emoji: "W", color: "#16a34a" },
+  { title: "bruh", text: "bruh", emoji: "bruh", color: "#dc2626" },
+  { title: "laugh", text: "laugh", emoji: "LOL", color: "#ea580c" },
+  { title: "ok", text: "ok", emoji: "OK", color: "#0ea5e9" },
+  { title: "gg", text: "gg", emoji: "GG", color: "#be185d" },
+  { title: "nah", text: "nah", emoji: "nah", color: "#64748b" }
+];
 
 siteButton.addEventListener("click", enterSite);
 sitePassword.addEventListener("keydown", (event) => {
@@ -168,6 +188,21 @@ securityList.addEventListener("click", (event) => {
 chatForm.addEventListener("submit", sendChat);
 mediaButton.addEventListener("click", () => mediaFile.click());
 mediaFile.addEventListener("change", uploadChatMedia);
+gifButton.addEventListener("click", toggleGifPanel);
+gifSearchButton.addEventListener("click", searchGifs);
+gifSearch.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    searchGifs();
+  }
+});
+gifPanel.addEventListener("click", (event) => {
+  const modeButton = event.target.closest("[data-gif-mode]");
+  if (modeButton) setGifMode(modeButton.dataset.gifMode);
+
+  const item = event.target.closest("[data-gif-url], [data-sticker-text]");
+  if (item) sendGifItem(item);
+});
 volumeSlider.addEventListener("input", () => setPeerVolume(state.activeVolumePeerId, Number(volumeSlider.value) / 100));
 volumeDown.addEventListener("click", () => bumpPeerVolume(-0.1));
 volumeUp.addEventListener("click", () => bumpPeerVolume(0.1));
@@ -1009,7 +1044,10 @@ async function handleSignal(message) {
 
   if (message.type === "chat") {
     addChatBubble(message);
-    if (message.from !== state.id) notifyUser(message.profile?.name || message.name || "New message", message.kind === "media" ? "sent media" : message.text || "sent a message", "chat");
+    if (message.from !== state.id) {
+      const chatKind = message.kind === "gif" ? "sent a GIF" : message.kind === "sticker" ? "sent a sticker" : message.kind === "media" ? "sent media" : message.text || "sent a message";
+      notifyUser(message.profile?.name || message.name || "New message", chatKind, "chat");
+    }
     return;
   }
 
@@ -1680,31 +1718,194 @@ async function uploadChatMedia() {
   }
 }
 
+function toggleGifPanel() {
+  gifPanel.hidden = !gifPanel.hidden;
+  if (!gifPanel.hidden && !gifGrid.children.length) renderFallbackStickers("Pick a sticker or add a GIPHY key for live GIF search.");
+}
+
+function setGifMode(mode) {
+  state.gifMode = mode === "sticker" ? "sticker" : "gif";
+  gifPanel.querySelectorAll("[data-gif-mode]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.gifMode === state.gifMode);
+  });
+  if (state.gifMode === "sticker") renderFallbackStickers("Built-in stickers work without an API key.");
+}
+
+async function searchGifs() {
+  if (state.gifLoading) return;
+  const query = gifSearch.value.trim();
+  if (!query && state.gifMode === "sticker") {
+    renderFallbackStickers("Built-in stickers work without an API key.");
+    return;
+  }
+
+  state.gifLoading = true;
+  gifSearchButton.disabled = true;
+  gifSearchButton.textContent = "wait";
+  gifGrid.textContent = "";
+  gifNote.textContent = "searching...";
+
+  try {
+    const key = await getGiphyApiKey();
+    if (!key) throw new Error("Add GIPHY_API_KEY on Render for live GIF search.");
+    const type = state.gifMode === "sticker" ? "stickers" : "gifs";
+    const endpoint = new URL(`https://api.giphy.com/v1/${type}/search`);
+    endpoint.searchParams.set("api_key", key);
+    endpoint.searchParams.set("q", query || "reaction");
+    endpoint.searchParams.set("limit", "12");
+    endpoint.searchParams.set("rating", "pg");
+    endpoint.searchParams.set("bundle", "messaging_non_clips");
+    const response = await fetch(endpoint);
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.meta?.msg || "gif search failed");
+    renderGifResults(giphyItems(result.data || []), "giphy");
+  } catch (error) {
+    renderFallbackStickers(error.message || "GIF search needs an API key.");
+  } finally {
+    state.gifLoading = false;
+    gifSearchButton.disabled = false;
+    gifSearchButton.textContent = "search";
+  }
+}
+
+async function getGiphyApiKey() {
+  if (state.giphyApiKey !== null) return state.giphyApiKey;
+  const response = await fetch("/api/gif-config", { headers: siteHeaders() });
+  const result = await response.json();
+  if (response.status === 423) {
+    showTimeout(result.timeoutUntil, result.remainingMs);
+    return "";
+  }
+  if (!response.ok) throw new Error(result.error || "gif config failed");
+  state.giphyApiKey = result.giphyApiKey || "";
+  return state.giphyApiKey;
+}
+
+function giphyItems(items) {
+  return items.map((item) => {
+    const images = item.images || {};
+    return {
+      id: String(item.id || ""),
+      title: String(item.title || "gif").slice(0, 80),
+      url: images.fixed_height?.url || images.downsized?.url || images.original?.url || "",
+      previewUrl: images.fixed_width_small?.url || images.fixed_height_small?.url || images.preview_gif?.url || "",
+      pageUrl: item.url || ""
+    };
+  }).filter((item) => item.url.startsWith("https://"));
+}
+
+function renderGifResults(items, provider) {
+  gifGrid.textContent = "";
+  if (!items.length) {
+    renderFallbackStickers("No GIFs found. Try stickers.");
+    return;
+  }
+
+  for (const item of items) {
+    const button = document.createElement("button");
+    button.className = "gif-item";
+    button.type = "button";
+    button.dataset.gifUrl = item.url;
+    button.dataset.gifPreview = item.previewUrl || item.url;
+    button.dataset.gifTitle = item.title || "gif";
+    button.dataset.gifProvider = provider;
+
+    const image = document.createElement("img");
+    image.src = item.previewUrl || item.url;
+    image.alt = item.title || "gif";
+    image.loading = "lazy";
+    button.append(image);
+    gifGrid.append(button);
+  }
+
+  gifNote.textContent = provider === "giphy" ? "Powered by GIPHY" : "";
+}
+
+function renderFallbackStickers(note = "") {
+  gifGrid.textContent = "";
+  for (const sticker of fallbackStickers) {
+    const button = document.createElement("button");
+    button.className = "gif-item sticker-item";
+    button.type = "button";
+    button.dataset.stickerText = sticker.text;
+    button.dataset.stickerEmoji = sticker.emoji;
+    button.dataset.stickerColor = sticker.color;
+    button.title = sticker.title;
+    button.style.setProperty("--sticker-color", sticker.color);
+    button.textContent = sticker.emoji;
+    gifGrid.append(button);
+  }
+  gifNote.textContent = note;
+}
+
+async function sendGifItem(item) {
+  if (state.mediaUploading) return;
+  const body = item.dataset.gifUrl
+    ? {
+        kind: "gif",
+        mediaUrl: item.dataset.gifUrl,
+        previewUrl: item.dataset.gifPreview || item.dataset.gifUrl,
+        title: item.dataset.gifTitle || "gif",
+        provider: item.dataset.gifProvider || "giphy"
+      }
+    : {
+        kind: "sticker",
+        stickerText: item.dataset.stickerText || "sticker",
+        stickerEmoji: item.dataset.stickerEmoji || "spark",
+        stickerColor: item.dataset.stickerColor || "#2563eb"
+      };
+
+  state.mediaUploading = true;
+  try {
+    const response = await fetch(`/api/send-gif?clientId=${encodeURIComponent(state.id || state.username)}`, {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(body)
+    });
+    const result = await response.json();
+    if (response.status === 423) {
+      showTimeout(result.timeoutUntil, result.remainingMs);
+      return;
+    }
+    if (!response.ok) throw new Error(result.error || "send failed");
+    if (result.chat) addChatBubble(result.chat);
+    playNoticeSound("chat");
+    gifPanel.hidden = true;
+  } catch (error) {
+    showToast(error.message || "send failed");
+  } finally {
+    state.mediaUploading = false;
+  }
+}
+
 function addChatBubble(message) {
   if (message.id && state.chatIds.has(message.id)) return;
   const age = message.createdAt ? Date.now() - Date.parse(message.createdAt) : 0;
-  const ttl = message.kind === "media" ? 12 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+  const ttl = ["media", "gif", "sticker"].includes(message.kind) ? 12 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
   if (age > ttl) return;
   if (message.id) state.chatIds.add(message.id);
 
   const mine = message.from === state.id;
   const row = document.createElement("div");
-  row.className = `chat-entry${mine ? " mine" : ""}${message.kind === "media" ? " media-entry" : ""}`;
+  const richMessage = ["media", "gif", "sticker"].includes(message.kind);
+  row.className = `chat-entry${mine ? " mine" : ""}${richMessage ? " media-entry" : ""}`;
 
   const avatar = document.createElement("div");
   avatar.className = "avatar chat-avatar";
   renderAvatar(avatar, message.profile || profileFromName(message.name));
 
   const bubble = document.createElement("div");
-  bubble.className = `bubble${mine ? " mine" : ""}${message.kind === "media" ? " media-bubble" : ""}`;
+  bubble.className = `bubble${mine ? " mine" : ""}${richMessage ? " media-bubble" : ""}`;
 
   const name = document.createElement("span");
   name.className = "bubble-name";
   name.textContent = message.profile?.name || message.name || "caller";
   bubble.append(name);
 
-  if (message.kind === "media" && message.mediaUrl) {
+  if ((message.kind === "media" || message.kind === "gif") && message.mediaUrl) {
     appendChatMedia(bubble, message);
+  } else if (message.kind === "sticker") {
+    appendSticker(bubble, message);
   } else {
     appendLinkedText(bubble, message.text || "");
   }
@@ -1716,18 +1917,26 @@ function addChatBubble(message) {
 function appendChatMedia(parent, message) {
   const isVideo = String(message.mediaType || "").startsWith("video/");
   const media = document.createElement(isVideo ? "video" : "img");
-  media.src = message.mediaUrl;
+  media.src = message.previewUrl || message.mediaUrl;
   media.className = "chat-media";
   if (isVideo) {
     media.controls = true;
     media.playsInline = true;
     media.preload = "metadata";
   } else {
-    media.alt = "uploaded image";
+    media.alt = message.title || "uploaded image";
     media.loading = "lazy";
   }
 
   parent.append(media);
+}
+
+function appendSticker(parent, message) {
+  const sticker = document.createElement("div");
+  sticker.className = "chat-sticker";
+  sticker.style.setProperty("--sticker-color", sanitizeColor(message.stickerColor));
+  sticker.textContent = message.stickerEmoji || message.stickerText || "spark";
+  parent.append(sticker);
 }
 
 function appendLinkedText(parent, text) {
@@ -1958,6 +2167,11 @@ function sanitizeName(name) {
 
 function sanitizeStatus(status) {
   return String(status || "online").trim().slice(0, 40) || "online";
+}
+
+function sanitizeColor(color) {
+  const value = String(color || "").trim();
+  return /^#[0-9a-f]{6}$/i.test(value) ? value : "#2563eb";
 }
 
 function initials(name) {
