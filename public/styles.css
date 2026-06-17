@@ -169,10 +169,21 @@ h1 {
   margin-bottom: 16px;
 }
 
-.top > div {
+.top-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.brand-block {
+  min-width: 0;
+}
+
+.online-count {
+  margin-top: -8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: bold;
 }
 
 .main-grid {
@@ -386,8 +397,50 @@ select:focus {
   white-space: nowrap;
 }
 
+.name-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
 .name {
   font-weight: bold;
+}
+
+.device-badge {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  color: var(--accent);
+  border: 1px solid var(--line-soft);
+  background: var(--soft);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: bold;
+  line-height: 1.35;
+}
+
+.device-badge[data-device="mobile"]::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 10px;
+  margin-right: 4px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+
+.device-badge[data-device="pc"]::before {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 7px;
+  margin-right: 4px;
+  border: 1px solid currentColor;
+  border-bottom-width: 2px;
+  border-radius: 2px;
+  vertical-align: -1px;
 }
 
 .tag {
@@ -908,7 +961,7 @@ select:focus {
     display: grid;
   }
 
-  .top > div {
+  .top-actions {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }

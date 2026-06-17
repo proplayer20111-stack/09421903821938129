@@ -59,8 +59,11 @@
     <section class="screen" id="callScreen" hidden>
       <div class="box app-box">
         <div class="top">
-          <h1>Aba squads discord</h1>
-          <div>
+          <div class="brand-block">
+            <h1>Aba squads discord</h1>
+            <div class="online-count" id="onlineCount">0 online</div>
+          </div>
+          <div class="top-actions">
             <button class="plain" id="profileButton" type="button">profile</button>
             <button class="plain" id="themeButton" type="button">themes</button>
             <button class="plain" id="adminButton" type="button" hidden>admin</button>
@@ -106,7 +109,7 @@
 
             <div class="status" id="connectionState" hidden>offline</div>
             <div class="mic-status" id="micStatus">mic not joined</div>
-            <div class="people" id="participants"></div>
+            <div class="people" id="participants" hidden></div>
             <div class="kick-start-panel" id="kickStartPanel" hidden>
               <h2 id="kickTargetTitle">Vote kick</h2>
               <label>
@@ -126,7 +129,7 @@
                 <button class="small" id="kickCancelButton" type="button">cancel</button>
               </div>
             </div>
-            <div class="kick-votes" id="kickVotes"></div>
+            <div class="kick-votes" id="kickVotes" hidden></div>
 
             <div class="admin-panel" id="adminPanel" hidden>
               <h2>Accounts</h2>

@@ -45,6 +45,7 @@ const mimeTypes = {
   ".js": "application/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".png": "image/png",
+  ".svg": "image/svg+xml",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".webm": "video/webm",
@@ -212,6 +213,7 @@ server.on("upgrade", (req, socket) => {
     account: null,
     isAdmin: false,
     deviceId: "",
+    deviceType: "pc",
     inCall: false,
     room: null,
     socket,
@@ -337,6 +339,7 @@ function handleMessage(client, message) {
     if (account.isAdmin) protectDevice(deviceId);
     saveAccounts();
     client.deviceId = deviceId;
+    client.deviceType = normalizeDeviceType(message.deviceType);
     client.account = session.username;
     client.isAdmin = account.isAdmin;
     client.profile = normalizeProfile(account.profile || { name: session.username });
@@ -366,8 +369,13 @@ function handleMessage(client, message) {
     }
     client.profile = normalizeProfile(message.profile || { name: message.name });
     client.name = client.profile.name;
+    client.deviceType = normalizeDeviceType(message.deviceType || client.deviceType);
+    const wasCallEmpty = !rooms.get("main")?.size;
     client.inCall = true;
     joinRoom(client, "main");
+    if (wasCallEmpty) {
+      broadcastPresence({ type: "call-started", user: publicClient(client) }, client.id);
+    }
     broadcastPresence({ type: "presence-update", user: publicClient(client) });
     broadcastPresenceSync();
     return;
@@ -457,7 +465,8 @@ function joinRoom(client, room) {
   const peers = [...rooms.get(room)].map((peer) => ({
     id: peer.id,
     name: peer.name,
-    profile: peer.profile
+    profile: peer.profile,
+    deviceType: normalizeDeviceType(peer.deviceType)
   }));
   rooms.get(room).add(client);
 
@@ -470,7 +479,7 @@ function joinRoom(client, room) {
 
   broadcast(room, {
     type: "peer-joined",
-    peer: { id: client.id, name: client.name, profile: client.profile }
+    peer: { id: client.id, name: client.name, profile: client.profile, deviceType: normalizeDeviceType(client.deviceType) }
   }, client.id);
 }
 
@@ -679,6 +688,7 @@ function publicClient(client) {
     id: client.id,
     username: client.account,
     profile: client.profile,
+    deviceType: normalizeDeviceType(client.deviceType),
     inCall: Boolean(client.inCall),
     isAdmin: Boolean(client.isAdmin)
   };
@@ -1226,6 +1236,10 @@ function getDeviceId(req, body = null) {
 
 function normalizeDeviceId(deviceId) {
   return String(deviceId || "").trim().replace(/[^a-zA-Z0-9._:-]/g, "").slice(0, 120);
+}
+
+function normalizeDeviceType(deviceType) {
+  return deviceType === "mobile" ? "mobile" : "pc";
 }
 
 function getDeviceTimeout(deviceId) {

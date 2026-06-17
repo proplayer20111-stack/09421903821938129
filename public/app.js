@@ -11,6 +11,7 @@ const timeoutScreen = $("#timeoutScreen");
 const timeoutCountdown = $("#timeoutCountdown");
 const authScreen = $("#authScreen");
 const callScreen = $("#callScreen");
+const onlineCount = $("#onlineCount");
 const loginTab = $("#loginTab");
 const signupTab = $("#signupTab");
 const authName = $("#authName");
@@ -80,6 +81,7 @@ const state = {
   deviceId: "",
   username: "",
   isAdmin: false,
+  deviceType: "pc",
   ws: null,
   stream: null,
   rawStream: null,
@@ -103,6 +105,7 @@ const state = {
   gifOffset: 0,
   gifHasMore: true,
   notificationContext: null,
+  notificationRegistration: null,
   notificationWanted: false,
   heartbeatTimer: null,
   wakeLock: null,
@@ -118,6 +121,7 @@ const state = {
   },
   peers: new Map(),
   cards: new Map(),
+  onlineUsers: new Map(),
   chatIds: new Set(),
   originalTitle: document.title,
   titleTimer: null
@@ -227,6 +231,7 @@ async function boot() {
   localStorage.removeItem("callroom.profile");
   localStorage.removeItem("callroom.server");
   localStorage.removeItem("callroom.ui.v1");
+  registerNotificationWorker();
   state.deviceId = getBrowserDeviceId();
   loadTheme();
   loadDevicePreference();
@@ -428,11 +433,13 @@ function chooseDevice(device) {
 }
 
 function applyDevice(device) {
-  document.body.dataset.layout = device === "pc" ? "pc" : "mobile";
-  pcLayoutButton.classList.toggle("blue", device === "pc");
-  pcLayoutButton.classList.toggle("plain", device !== "pc");
-  mobileLayoutButton.classList.toggle("blue", device === "mobile");
-  mobileLayoutButton.classList.toggle("plain", device !== "mobile");
+  const cleanDevice = device === "mobile" ? "mobile" : "pc";
+  state.deviceType = cleanDevice;
+  document.body.dataset.layout = cleanDevice;
+  pcLayoutButton.classList.toggle("blue", cleanDevice === "pc");
+  pcLayoutButton.classList.toggle("plain", cleanDevice !== "pc");
+  mobileLayoutButton.classList.toggle("blue", cleanDevice === "mobile");
+  mobileLayoutButton.classList.toggle("plain", cleanDevice !== "mobile");
 }
 
 async function showDevicePicker() {
@@ -537,7 +544,7 @@ function connectPresence() {
 
   state.ws.addEventListener("open", () => {
     setConnection("online", true);
-    send({ type: "presence", token: state.token, siteToken: state.siteToken, deviceId: state.deviceId });
+    send({ type: "presence", token: state.token, siteToken: state.siteToken, deviceId: state.deviceId, deviceType: state.deviceType });
     startHeartbeat();
   });
 
@@ -583,6 +590,9 @@ function logout() {
   };
   for (const card of state.cards.values()) card.remove();
   state.cards.clear();
+  state.onlineUsers.clear();
+  updateOnlineCounter();
+  updatePopups();
   state.chatIds.clear();
   chatLog.textContent = "";
   authName.value = "";
@@ -796,6 +806,7 @@ async function setAccountSignupBlock(username, blocked) {
 
 async function joinCall() {
   if (state.inCall) return;
+  warmNotifications();
   if (state.callKickUntil > Date.now()) {
     updateJoinKickLock();
     return;
@@ -811,6 +822,7 @@ async function joinCall() {
     type: "join",
     room: "main",
     name: state.profile.name,
+    deviceType: state.deviceType,
     profile: publicProfile()
   });
 }
@@ -978,17 +990,20 @@ async function handleSignal(message) {
 
   if (message.type === "presence-list") {
     state.id = message.self;
+    syncOnlineUsers(message.users || []);
     syncParticipants(message.users || []);
     return;
   }
 
   if (message.type === "presence-sync") {
+    syncOnlineUsers(message.users || []);
     syncParticipants(message.users || []);
     return;
   }
 
   if (message.type === "presence-update") {
     const user = message.user;
+    updateOnlineUser(user);
     if (user.inCall) {
       const wasVisible = state.cards.has(user.id);
       renderParticipant(user.id, user.profile, user.id === state.id, true);
@@ -1000,8 +1015,19 @@ async function handleSignal(message) {
   }
 
   if (message.type === "presence-left") {
+    state.onlineUsers.delete(message.id);
+    updateOnlineCounter();
     removePeer(message.id, true);
     playNoticeSound("leave");
+    return;
+  }
+
+  if (message.type === "call-started") {
+    const user = message.user || {};
+    updateOnlineUser(user);
+    if (user.id !== state.id && !state.inCall) {
+      notifyUser("Call started", `${user.profile?.name || user.username || "Someone"} joined the call`, "join", { forceSystem: true });
+    }
     return;
   }
 
@@ -1131,6 +1157,12 @@ async function restartPeerIce(peer) {
 }
 
 async function ensurePeer(peerInfo) {
+  updateOnlineUser({
+    id: peerInfo.id,
+    profile: peerInfo.profile || profileFromName(peerInfo.name),
+    deviceType: peerInfo.deviceType || "pc",
+    inCall: true
+  });
   if (state.peers.has(peerInfo.id)) return state.peers.get(peerInfo.id);
 
   const profile = peerInfo.profile || profileFromName(peerInfo.name);
@@ -1208,7 +1240,10 @@ function renderParticipant(id, profile, local, inCall) {
   card.innerHTML = `
     <div class="avatar"></div>
     <div class="who">
-      <div class="name"></div>
+      <div class="name-line">
+        <span class="name"></span>
+        <span class="device-badge" title="device"></span>
+      </div>
     </div>
     <div class="tag"></div>
     <button class="small peer-mute" type="button">mute</button>
@@ -1223,10 +1258,14 @@ function updateParticipant(id, profile, local, inCall) {
   if (!card) return;
 
   const cleanProfile = normalizeProfile(profile);
+  const user = state.onlineUsers.get(id);
+  const deviceType = user?.deviceType || (local ? state.deviceType : "pc");
   card.dataset.local = local ? "true" : "false";
   card.dataset.inCall = inCall ? "true" : "false";
+  card.dataset.deviceType = deviceType;
   renderAvatar(card.querySelector(".avatar"), cleanProfile);
   card.querySelector(".name").textContent = local ? `${cleanProfile.name} (you)` : cleanProfile.name;
+  renderDeviceBadge(card.querySelector(".device-badge"), deviceType);
   card.querySelector(".tag").textContent = inCall ? (local ? "you" : "live") : "";
   const peerMute = card.querySelector(".peer-mute");
   peerMute.hidden = local || !state.inCall;
@@ -1234,6 +1273,7 @@ function updateParticipant(id, profile, local, inCall) {
   card.classList.toggle("in-call", inCall);
   card.classList.toggle("no-mic", local && inCall && !state.hasMic);
   if (local && inCall && !state.hasMic) card.querySelector(".tag").textContent = "no mic";
+  updatePopups();
 }
 
 function syncParticipants(users) {
@@ -1251,6 +1291,38 @@ function syncParticipants(users) {
   if (state.inCall && state.id && !inCallIds.has(state.id)) {
     resetLocalCall(false);
   }
+  updatePopups();
+}
+
+function syncOnlineUsers(users) {
+  state.onlineUsers.clear();
+  for (const user of users) updateOnlineUser(user, false);
+  updateOnlineCounter();
+}
+
+function updateOnlineUser(user, updateCounter = true) {
+  if (!user?.id) return;
+  state.onlineUsers.set(user.id, user);
+  const card = state.cards.get(user.id);
+  if (card) renderDeviceBadge(card.querySelector(".device-badge"), user.deviceType || "pc");
+  if (updateCounter) updateOnlineCounter();
+}
+
+function updateOnlineCounter() {
+  const count = new Set([...state.onlineUsers.values()].map((user) => user.username || user.id)).size;
+  onlineCount.textContent = `${count} online`;
+}
+
+function renderDeviceBadge(target, deviceType) {
+  const mobile = deviceType === "mobile";
+  target.textContent = mobile ? "phone" : "pc";
+  target.title = mobile ? "Mobile" : "PC";
+  target.dataset.device = mobile ? "mobile" : "pc";
+}
+
+function updatePopups() {
+  participants.hidden = !participants.children.length;
+  kickVotes.hidden = !kickVotes.children.length;
 }
 
 function renderAvatar(target, profile) {
@@ -1289,6 +1361,7 @@ function removePeer(id, removeCard) {
   if (card && removeCard) {
     card.remove();
     state.cards.delete(id);
+    updatePopups();
   }
 }
 
@@ -1463,6 +1536,7 @@ function renderKickVotes() {
     card.append(top, meter, status, button);
     kickVotes.append(card);
   }
+  updatePopups();
   syncKickTicker();
 }
 
@@ -2057,23 +2131,50 @@ function playNoticeSound(kind = "soft") {
   }
 }
 
-function notifyUser(title, body = "", sound = "soft") {
+async function notifyUser(title, body = "", sound = "soft", options = {}) {
   playNoticeSound(sound);
   showToast(body ? `${title}: ${body}` : title);
   flashTitle(title);
 
-  if (document.visibilityState !== "visible" && "Notification" in window && Notification.permission === "granted") {
-    try {
-      new Notification(title, { body, silent: true });
-    } catch {
+  const shouldShowSystem = options.forceSystem || document.visibilityState !== "visible";
+  if (!shouldShowSystem || !("Notification" in window) || Notification.permission !== "granted") return;
+
+  try {
+    const registration = state.notificationRegistration || await navigator.serviceWorker?.ready;
+    if (registration?.showNotification) {
+      await registration.showNotification(title, {
+        body,
+        tag: options.tag || "aba-call",
+        renotify: true,
+        silent: false,
+        icon: "/icon.svg",
+        badge: "/icon.svg",
+        data: { url: location.href }
+      });
+      return;
     }
+  } catch {
+  }
+
+  try {
+    new Notification(title, { body, silent: false });
+  } catch {
   }
 }
 
 function warmNotifications() {
-  if (state.notificationWanted || !("Notification" in window) || Notification.permission !== "default") return;
+  if (state.notificationWanted || !window.isSecureContext || !("Notification" in window) || Notification.permission !== "default") return;
   state.notificationWanted = true;
   Notification.requestPermission().catch(() => {});
+}
+
+async function registerNotificationWorker() {
+  if (!("serviceWorker" in navigator) || !window.isSecureContext) return;
+  try {
+    state.notificationRegistration = await navigator.serviceWorker.register("/sw.js");
+  } catch {
+    state.notificationRegistration = null;
+  }
 }
 
 function flashTitle(title) {
