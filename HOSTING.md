@@ -103,6 +103,47 @@ Planned migration:
 Catbox profile and chat media can remain as URLs in the database, so the
 database does not need to store large image or video files.
 
+## Set Up Neon Storage
+
+The app now supports Neon automatically. Accounts, password hashes, profile
+names, profile media URLs, admin status, known devices, device timeouts, and
+signup blocks are stored permanently when `DATABASE_URL` is present.
+
+1. Open <https://console.neon.tech/signup> and create a free Neon account.
+2. Create a project named `aba-squads-discord`.
+3. Keep the default production branch and the default `neondb` database.
+4. On the project dashboard, click **Connect**.
+5. Leave **Connection pooling** enabled. The hostname in the generated URL
+   should contain `-pooler`.
+6. Copy the entire connection string. It starts with `postgresql://` and ends
+   with options such as `sslmode=require`. Treat this URL like a password.
+7. Open the Render dashboard and select the Aba Squads Discord web service.
+8. Open **Environment**, then add:
+   - Key: `DATABASE_URL`
+   - Value: the complete pooled Neon connection string
+9. Save the environment change and redeploy the service.
+10. Open the Render logs. A successful setup prints:
+
+```text
+Permanent Neon/Postgres storage connected.
+```
+
+No SQL needs to be pasted into Neon. On first startup, the app creates an
+`app_state` table and imports the current `accounts.json` and
+`device-rules.json` values. Later changes are written to Neon automatically.
+
+To verify it:
+
+1. Create a test account or change a profile.
+2. In Neon, open **Tables** and select `app_state`.
+3. Confirm that rows named `accounts` and `device-rules` exist.
+4. Restart or redeploy the Render service.
+5. Log in again and confirm that the account and profile remain.
+
+Do not put `DATABASE_URL` in GitHub, source code, screenshots, or chat. Store it
+only as a Render environment variable and in a local `.env` file if local
+database testing is needed.
+
 ## Local Testing
 
 Run:

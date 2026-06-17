@@ -3,6 +3,12 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const os = require("os");
+let Pool = null;
+try {
+  ({ Pool } = require("pg"));
+} catch {
+  Pool = null;
+}
 let webPush = null;
 try {
   webPush = require("web-push");
@@ -11,6 +17,7 @@ try {
 }
 
 const PORT = process.env.PORT || 3000;
+const DATABASE_URL = String(process.env.DATABASE_URL || "").trim();
 const PUBLIC_DIR = path.join(__dirname, "public");
 const DATA_DIR = process.env.DATA_DIR || __dirname;
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -34,6 +41,8 @@ const kickVotes = new Map();
 const callKicks = new Map();
 const pushSubscriptions = new Map();
 let accounts = loadAccounts();
+let databasePool = null;
+let databaseSaveChain = Promise.resolve();
 
 const SITE_PASSWORD = process.env.SITE_PASSWORD || "Seth123";
 const SITE_TOKEN = crypto.createHash("sha256").update(`site:${SITE_PASSWORD}`).digest("hex");
@@ -1460,6 +1469,7 @@ function loadAccounts() {
 
 function saveAccounts() {
   fs.writeFileSync(ACCOUNTS_PATH, JSON.stringify(accounts, null, 2));
+  queueDatabaseSave("accounts", accounts);
 }
 
 function loadDeviceRules() {
@@ -1471,10 +1481,85 @@ function loadDeviceRules() {
 }
 
 function saveDeviceRules() {
-  fs.writeFileSync(DEVICE_RULES_PATH, JSON.stringify({
+  const rules = {
     deviceTimeouts: [...deviceTimeouts.entries()].filter(([, until]) => until > Date.now()),
     signupBlockedDevices: [...signupBlockedDevices]
-  }, null, 2));
+  };
+  fs.writeFileSync(DEVICE_RULES_PATH, JSON.stringify(rules, null, 2));
+  queueDatabaseSave("device-rules", rules);
+}
+
+async function initializeDatabaseStorage() {
+  if (!DATABASE_URL) {
+    console.log("Permanent database storage is disabled; using local JSON files.");
+    return;
+  }
+  if (!Pool) throw new Error("DATABASE_URL is set but the pg package is unavailable.");
+
+  databasePool = new Pool({
+    connectionString: DATABASE_URL,
+    max: 5,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000
+  });
+
+  await databasePool.query(`
+    CREATE TABLE IF NOT EXISTS app_state (
+      key TEXT PRIMARY KEY,
+      value JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  const result = await databasePool.query(
+    "SELECT key, value FROM app_state WHERE key = ANY($1::text[])",
+    [["accounts", "device-rules"]]
+  );
+  const stored = new Map(result.rows.map((row) => [row.key, row.value]));
+
+  if (stored.has("accounts")) {
+    accounts = stored.get("accounts") || {};
+    fs.writeFileSync(ACCOUNTS_PATH, JSON.stringify(accounts, null, 2));
+  } else {
+    await saveDatabaseState("accounts", accounts);
+  }
+
+  if (stored.has("device-rules")) {
+    const rules = stored.get("device-rules") || {};
+    deviceTimeouts.clear();
+    for (const [deviceId, until] of rules.deviceTimeouts || []) {
+      if (Number(until) > Date.now()) deviceTimeouts.set(deviceId, Number(until));
+    }
+    signupBlockedDevices.clear();
+    for (const deviceId of rules.signupBlockedDevices || []) signupBlockedDevices.add(deviceId);
+    fs.writeFileSync(DEVICE_RULES_PATH, JSON.stringify(rules, null, 2));
+  } else {
+    await saveDatabaseState("device-rules", {
+      deviceTimeouts: [...deviceTimeouts.entries()].filter(([, until]) => until > Date.now()),
+      signupBlockedDevices: [...signupBlockedDevices]
+    });
+  }
+
+  console.log("Permanent Neon/Postgres storage connected.");
+}
+
+function queueDatabaseSave(key, value) {
+  if (!databasePool) return;
+  const snapshot = JSON.parse(JSON.stringify(value));
+  databaseSaveChain = databaseSaveChain
+    .then(() => saveDatabaseState(key, snapshot))
+    .catch((error) => console.error(`Database save failed for ${key}:`, error.message));
+}
+
+async function saveDatabaseState(key, value) {
+  if (!databasePool) return;
+  await databasePool.query(
+    `INSERT INTO app_state (key, value, updated_at)
+     VALUES ($1, $2::jsonb, NOW())
+     ON CONFLICT (key)
+     DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [key, JSON.stringify(value)]
+  );
 }
 
 function hashPassword(password) {
@@ -1588,12 +1673,25 @@ function getHostInfo() {
   };
 }
 
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`Calling website running at http://localhost:${PORT}`);
-  for (const url of getHostInfo().urls) {
-    console.log(`Phone/LAN URL: ${url}`);
+async function startServer() {
+  try {
+    await initializeDatabaseStorage();
+  } catch (error) {
+    console.error("Permanent database storage could not start:", error.message);
+    console.error("Refusing to start with temporary storage while DATABASE_URL is set.");
+    process.exitCode = 1;
+    return;
   }
-});
+
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`Calling website running at http://localhost:${PORT}`);
+    for (const url of getHostInfo().urls) {
+      console.log(`Phone/LAN URL: ${url}`);
+    }
+  });
+}
+
+startServer();
 
 setInterval(pruneChatMessages, 60 * 60 * 1000).unref();
 setInterval(() => {

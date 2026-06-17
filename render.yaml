@@ -10,3 +10,5 @@ services:
     envVars:
       - key: SITE_PASSWORD
         sync: false
+      - key: DATABASE_URL
+        sync: false
