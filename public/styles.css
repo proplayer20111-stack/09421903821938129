@@ -995,6 +995,16 @@ select:focus {
     -webkit-backdrop-filter: none !important;
   }
 
+  html,
+  body {
+    touch-action: pan-x pan-y;
+  }
+
+  input,
+  select {
+    font-size: 16px;
+  }
+
   .screen {
     display: block;
     min-height: 100dvh;

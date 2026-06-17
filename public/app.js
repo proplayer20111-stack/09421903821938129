@@ -1086,6 +1086,7 @@ async function handleSignal(message) {
   if (message.type === "presence-left") {
     state.onlineUsers.delete(message.id);
     updateOnlineCounter();
+    updateKickAvailability();
     removePeer(message.id, true);
     playNoticeSound("leave");
     return;
@@ -1367,6 +1368,7 @@ function syncParticipants(users) {
     resetLocalCall(false);
   }
   updatePopups();
+  updateKickAvailability();
 }
 
 function syncOnlineUsers(users) {
@@ -1381,6 +1383,7 @@ function updateOnlineUser(user, updateCounter = true) {
   const card = state.cards.get(user.id);
   if (card) renderDeviceBadge(card.querySelector(".device-badge"), user.deviceType || "pc");
   if (updateCounter) updateOnlineCounter();
+  updateKickAvailability();
 }
 
 function updateOnlineCounter() {
@@ -1497,6 +1500,7 @@ function openVolumeMenu(id, x, y) {
   state.activeVolumePeerId = id;
   volumeTitle.textContent = `${card.querySelector(".name").textContent.replace(" (you)", "")} volume`;
   volumeSlider.value = String(Math.round((peer.volume ?? 1) * 100));
+  updateKickAvailability();
   volumeMenu.hidden = false;
 
   const menuWidth = 230;
@@ -1529,13 +1533,19 @@ function setPeerVolume(id, volume) {
 }
 
 function openKickStartPanel() {
+  const callSize = currentCallSize();
+  if (callSize < 3) {
+    showToast("vote kick needs at least 3 people in the call");
+    closeVolumeMenu();
+    return;
+  }
   const id = state.activeVolumePeerId;
   const card = state.cards.get(id);
   if (!id || !card || card.dataset.local === "true") return;
   state.activeKickTargetId = id;
   kickTargetTitle.textContent = `Vote kick ${card.querySelector(".name").textContent.replace(" (you)", "")}`;
   kickReason.value = "";
-  kickDuration.value = "60000";
+  updateKickDurationOptions(callSize);
   kickStartPanel.hidden = false;
   closeVolumeMenu();
 }
@@ -1547,6 +1557,11 @@ function closeKickStartPanel() {
 
 function startKickVote() {
   if (!state.activeKickTargetId) return;
+  if (currentCallSize() < 3) {
+    showToast("vote kick needs at least 3 people in the call");
+    closeKickStartPanel();
+    return;
+  }
   send({
     type: "kick-vote-start",
     targetId: state.activeKickTargetId,
@@ -1554,6 +1569,36 @@ function startKickVote() {
     reason: kickReason.value
   });
   closeKickStartPanel();
+}
+
+function currentCallSize() {
+  return [...state.onlineUsers.values()].filter((user) => user.inCall).length;
+}
+
+function kickDurationLimit(callSize = currentCallSize()) {
+  return Math.min(180, Math.max(30, callSize * 10));
+}
+
+function updateKickDurationOptions(callSize = currentCallSize()) {
+  const previous = Number(kickDuration.value) || 0;
+  const maxSeconds = kickDurationLimit(callSize);
+  kickDuration.textContent = "";
+  for (let seconds = 30; seconds <= maxSeconds; seconds += 10) {
+    const option = document.createElement("option");
+    option.value = String(seconds * 1000);
+    option.textContent = `${seconds} seconds`;
+    kickDuration.append(option);
+  }
+  const selectedSeconds = Math.min(maxSeconds, Math.max(30, Math.round(previous / 10000) * 10 || maxSeconds));
+  kickDuration.value = String(selectedSeconds * 1000);
+}
+
+function updateKickAvailability() {
+  const enabled = currentCallSize() >= 3;
+  voteKickButton.disabled = !enabled;
+  voteKickButton.textContent = enabled ? "vote kick" : "need 3 callers";
+  if (!enabled) closeKickStartPanel();
+  else if (!kickStartPanel.hidden) updateKickDurationOptions();
 }
 
 function castKickVote(voteId) {

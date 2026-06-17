@@ -553,6 +553,11 @@ function leaveRoom(client) {
 
 function handleKickVoteStart(client, message) {
   if (!client.account || !client.room || !rooms.has(client.room)) return;
+  const roomSize = rooms.get(client.room).size;
+  if (roomSize < 3) {
+    send(client, { type: "error", message: "vote kick needs at least 3 people in the call" });
+    return;
+  }
   const target = findClient(message.targetId);
   if (!target || target.id === client.id || target.room !== client.room || !target.account) return;
   const existingVote = [...kickVotes.values()].find((vote) => vote.room === client.room && vote.targetId === target.id);
@@ -562,7 +567,8 @@ function handleKickVoteStart(client, message) {
     return;
   }
 
-  const durationMs = Math.max(30 * 1000, Math.min(KICK_MAX_MS, Number(message.durationMs) || 60 * 1000));
+  const maxDurationMs = kickDurationLimit(roomSize);
+  const durationMs = Math.max(30 * 1000, Math.min(maxDurationMs, Number(message.durationMs) || maxDurationMs));
   const expiresAt = Date.now() + KICK_VOTE_TTL_MS;
   const vote = {
     id: crypto.randomUUID(),
@@ -604,6 +610,7 @@ function evaluateKickVote(vote) {
   }
 
   const roomMembers = [...(rooms.get(vote.room) || [])];
+  if (roomMembers.length < 3) return;
   const eligible = roomMembers.filter((member) => member.id !== vote.targetId && member.account);
   if (!eligible.length) return;
 
@@ -638,6 +645,10 @@ function evaluateKickVote(vote) {
     broadcastPresence({ type: "presence-update", user: publicClient(target) });
     broadcastPresenceSync();
   }
+}
+
+function kickDurationLimit(roomSize) {
+  return Math.min(KICK_MAX_MS, Math.max(30 * 1000, Number(roomSize || 0) * 10 * 1000));
 }
 
 function publicKickVote(vote) {
