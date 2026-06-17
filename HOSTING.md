@@ -59,6 +59,7 @@ If Git asks you to sign in, follow the browser sign-in prompt.
    - Optional value: a GIPHY developer API key, only needed for live GIF search
 8. Click deploy.
 9. Wait until Render says the service is live.
+10. If you add or change `GIPHY_API_KEY` later, redeploy or restart the Render service so Node sees the new value.
 
 ## Step 4: Use The Hosted Site
 

@@ -1720,7 +1720,10 @@ async function uploadChatMedia() {
 
 function toggleGifPanel() {
   gifPanel.hidden = !gifPanel.hidden;
-  if (!gifPanel.hidden && !gifGrid.children.length) renderFallbackStickers("Pick a sticker or add a GIPHY key for live GIF search.");
+  if (!gifPanel.hidden) {
+    if (!gifGrid.children.length) renderFallbackStickers("loading GIF setup...");
+    refreshGifConfig();
+  }
 }
 
 function setGifMode(mode) {
@@ -1747,7 +1750,7 @@ async function searchGifs() {
 
   try {
     const key = await getGiphyApiKey();
-    if (!key) throw new Error("Add GIPHY_API_KEY on Render for live GIF search.");
+    if (!key) throw new Error("GIPHY key is not active on this service yet. Redeploy or restart Render after adding it.");
     const type = state.gifMode === "sticker" ? "stickers" : "gifs";
     const endpoint = new URL(`https://api.giphy.com/v1/${type}/search`);
     endpoint.searchParams.set("api_key", key);
@@ -1769,8 +1772,8 @@ async function searchGifs() {
 }
 
 async function getGiphyApiKey() {
-  if (state.giphyApiKey !== null) return state.giphyApiKey;
-  const response = await fetch("/api/gif-config", { headers: siteHeaders() });
+  if (state.giphyApiKey) return state.giphyApiKey;
+  const response = await fetch(`/api/gif-config?t=${Date.now()}`, { headers: siteHeaders() });
   const result = await response.json();
   if (response.status === 423) {
     showTimeout(result.timeoutUntil, result.remainingMs);
@@ -1779,6 +1782,19 @@ async function getGiphyApiKey() {
   if (!response.ok) throw new Error(result.error || "gif config failed");
   state.giphyApiKey = result.giphyApiKey || "";
   return state.giphyApiKey;
+}
+
+async function refreshGifConfig() {
+  try {
+    const key = await getGiphyApiKey();
+    if (key) {
+      gifNote.textContent = "GIPHY connected. Search and tap a GIF to send.";
+      return;
+    }
+    renderFallbackStickers("GIPHY key is not active yet. Built-in stickers still work.");
+  } catch (error) {
+    renderFallbackStickers(error.message || "GIF setup failed. Built-in stickers still work.");
+  }
 }
 
 function giphyItems(items) {

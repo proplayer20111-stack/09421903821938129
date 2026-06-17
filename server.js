@@ -137,7 +137,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/api/gif-config") {
     if (!requireSiteAccess(req, res)) return;
-    sendJson(res, 200, { giphyApiKey: GIPHY_API_KEY });
+    sendJson(res, 200, {
+      provider: "giphy",
+      enabled: Boolean(GIPHY_API_KEY),
+      giphyApiKey: GIPHY_API_KEY
+    });
     return;
   }
 
