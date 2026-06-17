@@ -92,10 +92,12 @@ const state = {
   longPressTimer: null,
   mediaUploading: false,
   notificationContext: null,
+  notificationWanted: false,
   heartbeatTimer: null,
   wakeLock: null,
   callKickUntil: 0,
   kickVotes: new Map(),
+  kickTicker: null,
   timeoutTimer: null,
   profile: {
     name: "",
@@ -105,7 +107,9 @@ const state = {
   },
   peers: new Map(),
   cards: new Map(),
-  chatIds: new Set()
+  chatIds: new Set(),
+  originalTitle: document.title,
+  titleTimer: null
 };
 
 const rtcConfig = {
@@ -464,6 +468,7 @@ async function finishAuth() {
     applyAuth(result);
     saveAuth();
     showCallScreen();
+    warmNotifications();
     connectPresence();
   } catch (error) {
     showToast(error.message || "login failed");
@@ -888,6 +893,12 @@ async function handleSignal(message) {
     return;
   }
 
+  if (message.type === "error") {
+    showToast(message.message || "something failed");
+    playNoticeSound("error");
+    return;
+  }
+
   if (message.type === "device-timeout") {
     showTimeout(message.timeoutUntil);
     return;
@@ -899,15 +910,23 @@ async function handleSignal(message) {
   }
 
   if (message.type === "kick-vote") {
+    const previousVote = state.kickVotes.get(message.vote.id);
     state.kickVotes.set(message.vote.id, message.vote);
     renderKickVotes();
+    if (!previousVote) {
+      notifyUser("Vote kick started", `${message.vote.starterName || "Someone"} started a vote`, "vote");
+    }
     return;
   }
 
   if (message.type === "kick-vote-ended") {
     state.kickVotes.delete(message.voteId);
     renderKickVotes();
-    if (message.passed) showToast(`${message.targetName || "caller"} was kicked`);
+    if (message.passed) {
+      notifyUser("Vote passed", `${message.targetName || "caller"} was kicked`, "kick");
+    } else if (message.reason === "expired") {
+      notifyUser("Vote expired", `Kick vote for ${message.targetName || "caller"} ended`, "soft");
+    }
     return;
   }
 
@@ -955,6 +974,7 @@ async function handleSignal(message) {
 
   if (message.type === "presence-left") {
     removePeer(message.id, true);
+    playNoticeSound("leave");
     return;
   }
 
@@ -983,11 +1003,13 @@ async function handleSignal(message) {
 
   if (message.type === "peer-left") {
     removePeer(message.id, true);
+    playNoticeSound("leave");
     return;
   }
 
   if (message.type === "chat") {
     addChatBubble(message);
+    if (message.from !== state.id) notifyUser(message.profile?.name || message.name || "New message", message.kind === "media" ? "sent media" : message.text || "sent a message", "chat");
     return;
   }
 
@@ -1362,8 +1384,21 @@ function castKickVote(voteId) {
 function renderKickVotes() {
   kickVotes.textContent = "";
   for (const vote of state.kickVotes.values()) {
+    const remainingMs = Math.max(0, Date.parse(vote.expiresAt || "") - Date.now());
+    const seconds = Math.ceil(remainingMs / 1000);
+    const progress = Math.min(100, Math.round((Number(vote.votes || 0) / Math.max(1, Number(vote.threshold || 1))) * 100));
     const card = document.createElement("div");
     card.className = "kick-card";
+
+    const top = document.createElement("div");
+    top.className = "kick-top";
+
+    const avatar = document.createElement("div");
+    avatar.className = "avatar kick-avatar";
+    renderAvatar(avatar, vote.targetProfile || profileFromName(vote.targetName));
+
+    const copy = document.createElement("div");
+    copy.className = "kick-copy";
 
     const title = document.createElement("div");
     title.className = "kick-title";
@@ -1371,25 +1406,56 @@ function renderKickVotes() {
 
     const details = document.createElement("div");
     details.className = "kick-details";
-    const minutes = Math.ceil((vote.durationMs || 60000) / 60000);
-    details.textContent = `${minutes} min - ${vote.reason || "No reason"} - ${vote.votes}/${vote.threshold}`;
+    const durationSeconds = Math.ceil((vote.durationMs || 60000) / 1000);
+    details.textContent = `${durationSeconds}s timeout - ${vote.reason || "No reason"} - started by ${vote.starterName || "caller"}`;
+
+    copy.append(title, details);
+    top.append(avatar, copy);
+
+    const meter = document.createElement("div");
+    meter.className = "kick-meter";
+    const fill = document.createElement("span");
+    fill.style.width = `${progress}%`;
+    meter.append(fill);
+
+    const status = document.createElement("div");
+    status.className = "kick-status";
+    const voters = vote.voterNames?.length ? `yes: ${vote.voterNames.join(", ")}` : "no votes yet";
+    status.textContent = `${vote.votes}/${vote.threshold} votes needed - ${seconds}s left - ${voters}`;
 
     const button = document.createElement("button");
     button.className = "blue";
     button.type = "button";
-    button.textContent = vote.voterIds?.includes(state.id) ? "voted" : "vote";
+    button.textContent = vote.voterIds?.includes(state.id) ? "voted" : "vote yes";
     button.disabled = vote.targetId === state.id || vote.voterIds?.includes(state.id);
     button.dataset.kickVoteId = vote.id;
 
-    card.append(title, details, button);
+    card.append(top, meter, status, button);
     kickVotes.append(card);
+  }
+  syncKickTicker();
+}
+
+function syncKickTicker() {
+  if (state.kickVotes.size && !state.kickTicker) {
+    state.kickTicker = setInterval(() => {
+      for (const [id, vote] of state.kickVotes.entries()) {
+        if (Date.parse(vote.expiresAt || "") <= Date.now()) state.kickVotes.delete(id);
+      }
+      renderKickVotes();
+    }, 1000);
+  }
+
+  if (!state.kickVotes.size && state.kickTicker) {
+    clearInterval(state.kickTicker);
+    state.kickTicker = null;
   }
 }
 
 function handleCallKick(message) {
   state.callKickUntil = Date.parse(message.kickUntil || "") || Date.now() + 60000;
   leaveCall(false);
-  showToast(message.reason ? `kicked: ${message.reason}` : "kicked from call");
+  notifyUser("Kicked from call", message.reason ? `reason: ${message.reason}` : "you can rejoin when the timer ends", "kick");
   updateJoinKickLock();
 }
 
@@ -1435,6 +1501,7 @@ function resetLocalCall(showMessage = true) {
   releaseWakeLock();
   state.kickVotes.clear();
   renderKickVotes();
+  syncKickTicker();
   closeKickStartPanel();
 
   setupPanel.hidden = false;
@@ -1620,8 +1687,16 @@ function addChatBubble(message) {
   if (age > ttl) return;
   if (message.id) state.chatIds.add(message.id);
 
+  const mine = message.from === state.id;
+  const row = document.createElement("div");
+  row.className = `chat-entry${mine ? " mine" : ""}${message.kind === "media" ? " media-entry" : ""}`;
+
+  const avatar = document.createElement("div");
+  avatar.className = "avatar chat-avatar";
+  renderAvatar(avatar, message.profile || profileFromName(message.name));
+
   const bubble = document.createElement("div");
-  bubble.className = `bubble${message.from === state.id ? " mine" : ""}${message.kind === "media" ? " media-bubble" : ""}`;
+  bubble.className = `bubble${mine ? " mine" : ""}${message.kind === "media" ? " media-bubble" : ""}`;
 
   const name = document.createElement("span");
   name.className = "bubble-name";
@@ -1633,7 +1708,8 @@ function addChatBubble(message) {
   } else {
     appendLinkedText(bubble, message.text || "");
   }
-  chatLog.append(bubble);
+  row.append(avatar, bubble);
+  chatLog.append(row);
   chatLog.scrollTop = chatLog.scrollHeight;
 }
 
@@ -1747,6 +1823,10 @@ async function tuneAudioSender(sender) {
 }
 
 function playJoinSound() {
+  playNoticeSound("join");
+}
+
+function playNoticeSound(kind = "soft") {
   try {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) return;
@@ -1755,21 +1835,60 @@ function playJoinSound() {
     if (context.state === "suspended") context.resume().catch(() => {});
 
     const now = context.currentTime;
-    const gain = context.createGain();
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.12, now + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
-    gain.connect(context.destination);
+    const patterns = {
+      join: [{ f: 620, t: 0, d: 0.12 }, { f: 880, t: 0.1, d: 0.16 }],
+      leave: [{ f: 520, t: 0, d: 0.12 }, { f: 360, t: 0.1, d: 0.18 }],
+      chat: [{ f: 760, t: 0, d: 0.08 }, { f: 980, t: 0.08, d: 0.1 }],
+      vote: [{ f: 540, t: 0, d: 0.1 }, { f: 720, t: 0.09, d: 0.1 }, { f: 540, t: 0.18, d: 0.12 }],
+      kick: [{ f: 220, t: 0, d: 0.18 }, { f: 180, t: 0.16, d: 0.24 }],
+      error: [{ f: 180, t: 0, d: 0.12 }, { f: 160, t: 0.1, d: 0.18 }],
+      soft: [{ f: 680, t: 0, d: 0.12 }]
+    };
 
-    const first = context.createOscillator();
-    first.type = "sine";
-    first.frequency.setValueAtTime(660, now);
-    first.frequency.exponentialRampToValueAtTime(880, now + 0.12);
-    first.connect(gain);
-    first.start(now);
-    first.stop(now + 0.24);
+    for (const tone of patterns[kind] || patterns.soft) {
+      const gain = context.createGain();
+      gain.gain.setValueAtTime(0.0001, now + tone.t);
+      gain.gain.exponentialRampToValueAtTime(kind === "kick" ? 0.08 : 0.11, now + tone.t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + tone.t + tone.d);
+      gain.connect(context.destination);
+
+      const oscillator = context.createOscillator();
+      oscillator.type = kind === "kick" || kind === "error" ? "triangle" : "sine";
+      oscillator.frequency.setValueAtTime(tone.f, now + tone.t);
+      oscillator.connect(gain);
+      oscillator.start(now + tone.t);
+      oscillator.stop(now + tone.t + tone.d + 0.02);
+    }
   } catch {
   }
+}
+
+function notifyUser(title, body = "", sound = "soft") {
+  playNoticeSound(sound);
+  showToast(body ? `${title}: ${body}` : title);
+  flashTitle(title);
+
+  if (document.visibilityState !== "visible" && "Notification" in window && Notification.permission === "granted") {
+    try {
+      new Notification(title, { body, silent: true });
+    } catch {
+    }
+  }
+}
+
+function warmNotifications() {
+  if (state.notificationWanted || !("Notification" in window) || Notification.permission !== "default") return;
+  state.notificationWanted = true;
+  Notification.requestPermission().catch(() => {});
+}
+
+function flashTitle(title) {
+  clearTimeout(state.titleTimer);
+  if (document.visibilityState === "visible") return;
+  document.title = title;
+  state.titleTimer = setTimeout(() => {
+    document.title = state.originalTitle;
+  }, 2400);
 }
 
 async function requestWakeLock() {

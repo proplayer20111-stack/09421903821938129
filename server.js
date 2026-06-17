@@ -36,6 +36,7 @@ const MEDIA_TTL_MS = 12 * 60 * 60 * 1000;
 const MEDIA_COOLDOWN_MS = 30 * 1000;
 const DEVICE_TIMEOUT_MS = 3 * 60 * 1000;
 const KICK_MAX_MS = 3 * 60 * 1000;
+const KICK_VOTE_TTL_MS = 45 * 1000;
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -472,23 +473,34 @@ function handleKickVoteStart(client, message) {
   if (!client.account || !client.room || !rooms.has(client.room)) return;
   const target = findClient(message.targetId);
   if (!target || target.id === client.id || target.room !== client.room || !target.account) return;
+  const existingVote = [...kickVotes.values()].find((vote) => vote.room === client.room && vote.targetId === target.id);
+  if (existingVote) {
+    send(client, { type: "kick-vote", vote: publicKickVote(existingVote) });
+    send(client, { type: "error", message: "vote already running" });
+    return;
+  }
 
   const durationMs = Math.max(30 * 1000, Math.min(KICK_MAX_MS, Number(message.durationMs) || 60 * 1000));
+  const expiresAt = Date.now() + KICK_VOTE_TTL_MS;
   const vote = {
     id: crypto.randomUUID(),
     room: client.room,
     targetId: target.id,
     targetAccount: target.account,
     targetName: target.profile?.name || target.name,
+    targetProfile: normalizeProfile(target.profile || { name: target.name }),
     starterId: client.id,
     starterName: client.profile?.name || client.name,
+    starterProfile: normalizeProfile(client.profile || { name: client.name }),
     reason: sanitizeKickReason(message.reason),
     durationMs,
     createdAt: new Date().toISOString(),
+    expiresAt: new Date(expiresAt).toISOString(),
     votes: new Set([client.id])
   };
   kickVotes.set(vote.id, vote);
   broadcast(client.room, { type: "kick-vote", vote: publicKickVote(vote) });
+  setTimeout(() => expireKickVote(vote.id), KICK_VOTE_TTL_MS + 150);
   evaluateKickVote(vote);
 }
 
@@ -504,6 +516,11 @@ function handleKickVoteCast(client, message) {
 }
 
 function evaluateKickVote(vote) {
+  if (Date.parse(vote.expiresAt) <= Date.now()) {
+    expireKickVote(vote.id);
+    return;
+  }
+
   const roomMembers = [...(rooms.get(vote.room) || [])];
   const eligible = roomMembers.filter((member) => member.id !== vote.targetId && member.account);
   if (!eligible.length) return;
@@ -545,19 +562,42 @@ function publicKickVote(vote) {
   const roomMembers = [...(rooms.get(vote.room) || [])].filter((member) => member.id !== vote.targetId && member.account);
   const eligibleCount = roomMembers.length;
   const yesVotes = roomMembers.filter((member) => vote.votes.has(member.id)).length;
+  const voterNames = roomMembers
+    .filter((member) => vote.votes.has(member.id))
+    .map((member) => member.profile?.name || member.name)
+    .filter(Boolean);
   return {
     id: vote.id,
     targetId: vote.targetId,
     targetName: vote.targetName,
+    targetProfile: vote.targetProfile,
     starterId: vote.starterId,
     starterName: vote.starterName,
+    starterProfile: vote.starterProfile,
     reason: vote.reason,
     durationMs: vote.durationMs,
     createdAt: vote.createdAt,
+    expiresAt: vote.expiresAt,
     votes: yesVotes,
     threshold: eligibleCount <= 2 ? eligibleCount : Math.max(1, eligibleCount - 1),
+    eligibleCount,
+    voterNames,
     voterIds: [...vote.votes]
   };
+}
+
+function expireKickVote(voteId) {
+  const vote = kickVotes.get(voteId);
+  if (!vote) return;
+  kickVotes.delete(voteId);
+  broadcast(vote.room, {
+    type: "kick-vote-ended",
+    voteId,
+    passed: false,
+    reason: "expired",
+    targetId: vote.targetId,
+    targetName: vote.targetName
+  });
 }
 
 function getCallKick(username) {
