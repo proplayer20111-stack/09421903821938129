@@ -39,6 +39,7 @@ const protectedDeviceIds = new Set();
 const connectedSockets = new Set();
 const kickVotes = new Map();
 const callKicks = new Map();
+const voteKickCooldowns = new Map();
 const pushSubscriptions = new Map();
 let accounts = loadAccounts();
 let databasePool = null;
@@ -56,6 +57,7 @@ const MEDIA_COOLDOWN_MS = 30 * 1000;
 const DEVICE_TIMEOUT_MS = 3 * 60 * 1000;
 const KICK_MAX_MS = 3 * 60 * 1000;
 const KICK_VOTE_TTL_MS = 45 * 1000;
+const VOTE_KICK_COOLDOWN_MS = 3 * 60 * 1000;
 const MAX_CHAT_MESSAGES = 500;
 const MAX_CHAT_BYTES = 4 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
@@ -560,6 +562,14 @@ function handleKickVoteStart(client, message) {
   }
   const target = findClient(message.targetId);
   if (!target || target.id === client.id || target.room !== client.room || !target.account) return;
+  const cooldownRemaining = getVoteKickCooldown(target.account);
+  if (cooldownRemaining > 0) {
+    send(client, {
+      type: "error",
+      message: `that person is protected from vote kicks for ${Math.ceil(cooldownRemaining / 1000)}s`
+    });
+    return;
+  }
   const existingVote = [...kickVotes.values()].find((vote) => vote.room === client.room && vote.targetId === target.id);
   if (existingVote) {
     send(client, { type: "kick-vote", vote: publicKickVote(existingVote) });
@@ -624,6 +634,7 @@ function evaluateKickVote(vote) {
     until: kickUntilMs,
     reason: vote.reason
   });
+  voteKickCooldowns.set(vote.targetAccount, kickUntilMs + VOTE_KICK_COOLDOWN_MS);
   kickVotes.delete(vote.id);
   broadcast(vote.room, {
     type: "kick-vote-ended",
@@ -649,6 +660,15 @@ function evaluateKickVote(vote) {
 
 function kickDurationLimit(roomSize) {
   return Math.min(KICK_MAX_MS, Math.max(30 * 1000, Number(roomSize || 0) * 10 * 1000));
+}
+
+function getVoteKickCooldown(username) {
+  const until = voteKickCooldowns.get(username) || 0;
+  if (until <= Date.now()) {
+    voteKickCooldowns.delete(username);
+    return 0;
+  }
+  return until - Date.now();
 }
 
 function publicKickVote(vote) {
@@ -1549,6 +1569,9 @@ function protectRuntimeResources() {
   }
   for (const [username, kick] of callKicks) {
     if (!kick?.until || kick.until <= now) callKicks.delete(username);
+  }
+  for (const [username, until] of voteKickCooldowns) {
+    if (!until || until <= now) voteKickCooldowns.delete(username);
   }
   for (const [id, vote] of kickVotes) {
     if (Date.parse(vote.expiresAt || "") <= now) expireKickVote(id);
