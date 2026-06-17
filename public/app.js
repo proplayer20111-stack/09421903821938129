@@ -83,6 +83,11 @@ const state = {
   isAdmin: false,
   deviceType: "pc",
   ws: null,
+  manualDisconnect: false,
+  reconnectTimer: null,
+  reconnectAttempt: 0,
+  autoRejoin: false,
+  lastPongAt: 0,
   stream: null,
   rawStream: null,
   audioContext: null,
@@ -90,6 +95,7 @@ const state = {
   audioSource: null,
   audioDestination: null,
   meterFrame: null,
+  meterTimer: null,
   inCall: false,
   muted: false,
   hasMic: false,
@@ -107,6 +113,7 @@ const state = {
   notificationContext: null,
   notificationRegistration: null,
   notificationWanted: false,
+  pushSubscribing: false,
   heartbeatTimer: null,
   wakeLock: null,
   callKickUntil: 0,
@@ -213,16 +220,28 @@ document.addEventListener("click", (event) => {
   if (!volumeMenu.hidden && !volumeMenu.contains(event.target)) closeVolumeMenu();
 });
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && state.inCall) requestWakeLock();
+  if (document.visibilityState === "visible") {
+    if (state.inCall) requestWakeLock();
+    if (state.inCall && state.analyser && !state.meterTimer) setupLocalAudioMeter();
+    if (state.token && (!state.ws || state.ws.readyState === WebSocket.CLOSED)) scheduleReconnect(0);
+  } else {
+    stopAudioMeter();
+  }
 });
 window.addEventListener("resize", closeVolumeMenu);
 window.addEventListener("beforeunload", () => {
+  state.manualDisconnect = true;
   sendLeaveNow();
   if (state.ws?.readyState === WebSocket.OPEN) state.ws.close();
 });
 window.addEventListener("pagehide", () => {
+  state.manualDisconnect = true;
   sendLeaveNow();
   if (state.ws?.readyState === WebSocket.OPEN) state.ws.close();
+});
+window.addEventListener("pageshow", () => {
+  state.manualDisconnect = false;
+  if (state.token && (!state.ws || state.ws.readyState === WebSocket.CLOSED)) scheduleReconnect(0);
 });
 
 boot();
@@ -389,6 +408,7 @@ async function checkDeviceStatus() {
 }
 
 function showTimeout(timeoutUntil, remainingMs = 0) {
+  state.manualDisconnect = true;
   leaveCall(false);
   state.ws?.close();
   gateScreen.hidden = true;
@@ -535,37 +555,63 @@ function showCallScreen() {
   adminButton.hidden = !state.isAdmin;
   profileName.value = state.profile.name;
   renderAvatar(profilePreview, state.profile);
+  if ("Notification" in window && Notification.permission === "granted") enablePushNotifications();
 }
 
 function connectPresence() {
-  if (state.ws && state.ws.readyState !== WebSocket.CLOSED) return;
+  if (state.ws && [WebSocket.CONNECTING, WebSocket.OPEN].includes(state.ws.readyState)) return;
 
-  state.ws = new WebSocket(wsBase());
+  state.manualDisconnect = false;
+  const socket = new WebSocket(wsBase());
+  state.ws = socket;
 
-  state.ws.addEventListener("open", () => {
+  socket.addEventListener("open", () => {
+    if (socket !== state.ws) return;
     setConnection("online", true);
+    state.reconnectAttempt = 0;
+    state.lastPongAt = Date.now();
     send({ type: "presence", token: state.token, siteToken: state.siteToken, deviceId: state.deviceId, deviceType: state.deviceType });
     startHeartbeat();
   });
 
-  state.ws.addEventListener("message", async (event) => {
-    await handleSignal(JSON.parse(event.data));
+  socket.addEventListener("message", async (event) => {
+    if (socket !== state.ws) return;
+    try {
+      await handleSignal(JSON.parse(event.data));
+    } catch {
+      showToast("sync recovered");
+    }
   });
 
-  state.ws.addEventListener("close", () => {
+  socket.addEventListener("close", () => {
+    if (socket !== state.ws) return;
+    const wasInCall = state.inCall;
     setConnection("offline", false);
     stopHeartbeat();
     cleanupPeerConnections();
+    state.ws = null;
+    if (!state.manualDisconnect && state.token) {
+      state.autoRejoin = wasInCall || state.autoRejoin;
+      scheduleReconnect();
+    }
   });
 
-  state.ws.addEventListener("error", () => {
+  socket.addEventListener("error", () => {
     showToast("server not reachable");
   });
 }
 
 function startHeartbeat() {
   stopHeartbeat();
+  state.lastPongAt = Date.now();
   state.heartbeatTimer = setInterval(() => {
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+    if (Date.now() - state.lastPongAt > 35000) {
+      showToast("reconnecting");
+      state.autoRejoin = state.inCall || state.autoRejoin;
+      state.ws.close();
+      return;
+    }
     send({ type: "ping" });
   }, 10000);
 }
@@ -575,7 +621,27 @@ function stopHeartbeat() {
   state.heartbeatTimer = null;
 }
 
+function scheduleReconnect(delay = null) {
+  clearTimeout(state.reconnectTimer);
+  const wait = delay ?? Math.min(30000, 1000 * 2 ** Math.min(5, state.reconnectAttempt++));
+  state.reconnectTimer = setTimeout(() => {
+    if (!state.token || state.manualDisconnect) return;
+    connectPresence();
+  }, wait);
+}
+
+function maybeAutoRejoin() {
+  if (!state.autoRejoin || state.inCall || state.callKickUntil > Date.now()) return;
+  state.autoRejoin = false;
+  setTimeout(() => {
+    if (!state.inCall && state.ws?.readyState === WebSocket.OPEN) joinCall();
+  }, 400);
+}
+
 function logout() {
+  state.manualDisconnect = true;
+  state.autoRejoin = false;
+  clearTimeout(state.reconnectTimer);
   leaveCall(false);
   state.ws?.close();
   localStorage.removeItem(AUTH_KEY);
@@ -985,6 +1051,7 @@ async function handleSignal(message) {
   }
 
   if (message.type === "pong") {
+    state.lastPongAt = Date.now();
     return;
   }
 
@@ -992,12 +1059,14 @@ async function handleSignal(message) {
     state.id = message.self;
     syncOnlineUsers(message.users || []);
     syncParticipants(message.users || []);
+    maybeAutoRejoin();
     return;
   }
 
   if (message.type === "presence-sync") {
     syncOnlineUsers(message.users || []);
     syncParticipants(message.users || []);
+    maybeAutoRejoin();
     return;
   }
 
@@ -1335,10 +1404,11 @@ function renderAvatar(target, profile) {
     media.src = cleanProfile.avatarUrl;
     media.alt = "";
     if (isVideo) {
-      media.autoplay = true;
+      media.autoplay = state.deviceType !== "mobile";
       media.loop = true;
       media.muted = true;
       media.playsInline = true;
+      media.preload = state.deviceType === "mobile" ? "metadata" : "auto";
     }
     target.append(media);
     return;
@@ -1578,6 +1648,7 @@ function updateJoinKickLock() {
 }
 
 function leaveCall(showMessage = true) {
+  state.autoRejoin = false;
   sendLeaveNow();
   resetLocalCall(showMessage);
 }
@@ -1598,7 +1669,7 @@ function resetLocalCall(showMessage = true) {
   state.audioSource = null;
   state.audioDestination = null;
   state.analyser = null;
-  cancelAnimationFrame(state.meterFrame);
+  stopAudioMeter();
 
   cleanupPeerConnections();
   removePeer(state.id, true);
@@ -1626,7 +1697,7 @@ function resetLocalCall(showMessage = true) {
 function createProcessedMicStream(rawStream) {
   try {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextClass) return rawStream;
+    if (!AudioContextClass || state.deviceType === "mobile") return rawStream;
 
     state.audioContext = new AudioContextClass({ sampleRate: 48000 });
     state.audioSource = state.audioContext.createMediaStreamSource(rawStream);
@@ -1674,6 +1745,7 @@ function createProcessedMicStream(rawStream) {
 }
 
 function setupLocalAudioMeter() {
+  stopAudioMeter();
   if (!state.analyser) {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) return;
@@ -1690,6 +1762,14 @@ function setupLocalAudioMeter() {
 
   const samples = new Uint8Array(state.analyser.frequencyBinCount);
   const tick = () => {
+    if (!state.stream || !state.analyser) {
+      stopAudioMeter();
+      return;
+    }
+    if (document.visibilityState !== "visible") {
+      state.meterTimer = setTimeout(tick, 750);
+      return;
+    }
     state.analyser.getByteFrequencyData(samples);
     const average = samples.reduce((sum, value) => sum + value, 0) / samples.length;
     const speaking = average > 14 && !state.muted;
@@ -1700,10 +1780,17 @@ function setupLocalAudioMeter() {
       state.lastSpeakingSentAt = now;
       send({ type: "speaking", speaking });
     }
-    state.meterFrame = requestAnimationFrame(tick);
+    state.meterTimer = setTimeout(tick, state.deviceType === "mobile" ? 120 : 55);
   };
 
   tick();
+}
+
+function stopAudioMeter() {
+  cancelAnimationFrame(state.meterFrame);
+  state.meterFrame = null;
+  clearTimeout(state.meterTimer);
+  state.meterTimer = null;
 }
 
 async function flushIce(peer) {
@@ -1869,8 +1956,8 @@ function giphyItems(items) {
     return {
       id: String(item.id || ""),
       title: String(item.title || "gif").slice(0, 80),
-      url: images.fixed_height?.url || images.downsized?.url || images.original?.url || "",
-      previewUrl: images.fixed_width_small?.url || images.fixed_height_small?.url || images.preview_gif?.url || "",
+      url: images.fixed_height?.webp || images.fixed_height?.url || images.downsized?.url || images.original?.url || "",
+      previewUrl: images.fixed_width_small?.webp || images.fixed_width_small?.url || images.fixed_height_small?.webp || images.preview_gif?.url || "",
       pageUrl: item.url || ""
     };
   }).filter((item) => item.url.startsWith("https://"));
@@ -1897,6 +1984,7 @@ function renderGifResults(items, provider, append = false) {
     image.src = item.previewUrl || item.url;
     image.alt = item.title || "gif";
     image.loading = "lazy";
+    image.decoding = "async";
     button.append(image);
     gifGrid.append(button);
   }
@@ -1993,6 +2081,7 @@ function appendChatMedia(parent, message) {
   } else {
     media.alt = message.title || "uploaded image";
     media.loading = "lazy";
+    media.decoding = "async";
   }
 
   parent.append(media);
@@ -2163,9 +2252,18 @@ async function notifyUser(title, body = "", sound = "soft", options = {}) {
 }
 
 function warmNotifications() {
-  if (state.notificationWanted || !window.isSecureContext || !("Notification" in window) || Notification.permission !== "default") return;
+  if (!window.isSecureContext || !("Notification" in window)) return;
+  if (Notification.permission === "granted") {
+    enablePushNotifications();
+    return;
+  }
+  if (state.notificationWanted || Notification.permission !== "default") return;
   state.notificationWanted = true;
-  Notification.requestPermission().catch(() => {});
+  Notification.requestPermission()
+    .then((permission) => {
+      if (permission === "granted") enablePushNotifications(true);
+    })
+    .catch(() => {});
 }
 
 async function registerNotificationWorker() {
@@ -2175,6 +2273,64 @@ async function registerNotificationWorker() {
   } catch {
     state.notificationRegistration = null;
   }
+}
+
+async function enablePushNotifications(showTest = false) {
+  if (state.pushSubscribing || !state.token || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
+  state.pushSubscribing = true;
+  try {
+    const configResponse = await fetch("/api/push-config", { headers: siteHeaders() });
+    const config = await configResponse.json();
+    if (!configResponse.ok || !config.enabled || !config.publicKey) return;
+
+    const registration = state.notificationRegistration || await navigator.serviceWorker.ready;
+    state.notificationRegistration = registration;
+    const applicationServerKey = urlBase64ToUint8Array(config.publicKey);
+    let existing = await registration.pushManager.getSubscription();
+    if (existing && !pushKeyMatches(existing.options?.applicationServerKey, applicationServerKey)) {
+      await existing.unsubscribe();
+      existing = null;
+    }
+    const subscription = existing || await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey
+    });
+
+    await fetch("/api/push-subscribe", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ subscription, deviceId: state.deviceId })
+    });
+
+    if (showTest) {
+      await registration.showNotification("Notifications ready", {
+        body: "Call alerts are enabled on this device.",
+        tag: "aba-notification-test",
+        icon: "/icon.svg",
+        badge: "/icon.svg",
+        data: { url: location.href }
+      });
+    }
+  } catch {
+  } finally {
+    state.pushSubscribing = false;
+  }
+}
+
+function urlBase64ToUint8Array(value) {
+  const padding = "=".repeat((4 - value.length % 4) % 4);
+  const base64 = `${value}${padding}`.replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const output = new Uint8Array(raw.length);
+  for (let index = 0; index < raw.length; index += 1) output[index] = raw.charCodeAt(index);
+  return output;
+}
+
+function pushKeyMatches(existingKey, nextKey) {
+  if (!existingKey) return false;
+  const current = new Uint8Array(existingKey);
+  if (current.length !== nextKey.length) return false;
+  return current.every((value, index) => value === nextKey[index]);
 }
 
 function flashTitle(title) {

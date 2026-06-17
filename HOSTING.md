@@ -60,6 +60,7 @@ If Git asks you to sign in, follow the browser sign-in prompt.
 8. Click deploy.
 9. Wait until Render says the service is live.
 10. If you add or change `GIPHY_API_KEY` later, redeploy or restart the Render service so Node sees the new value.
+11. Phone/PC call notifications use Web Push when supported. For stable subscriptions across Render restarts, set `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY`; otherwise temporary push keys are generated every server start.
 
 ## Step 4: Use The Hosted Site
 
@@ -76,7 +77,31 @@ Use that URL on both PC and phone. Phone mic should work better there because it
 - Free Render services can sleep. First load may take a bit.
 - Accounts are stored in JSON files. On free hosting, data may reset after redeploys or server resets unless you add persistent storage.
 - Live GIF search needs `GIPHY_API_KEY`; without it, the GIF panel shows that GIPHY is not active yet.
+- Mobile call notifications require HTTPS, notification permission, service worker support, and browser Web Push support. After a redeploy, open the site once so the phone can register.
 - The next serious upgrade should be a database for permanent accounts and admin rules.
+
+## Permanent Storage Plan
+
+Render's free web-service filesystem is temporary, so `accounts.json` and
+`device-rules.json` can disappear after a restart, redeploy, or idle spin-down.
+A persistent Render disk requires a paid web service. Render's free Postgres
+database also expires after 30 days.
+
+The best fit for this project is a separate free Postgres database, with Neon
+as the first choice. The app can keep running on Render while accounts,
+profiles, device rules, chat records, and push subscriptions are stored in
+Postgres through a `DATABASE_URL` environment variable.
+
+Planned migration:
+
+1. Create a Neon Postgres project.
+2. Add its pooled connection string to Render as `DATABASE_URL`.
+3. Add database tables for accounts, device rules, chat, and push subscriptions.
+4. Import the current JSON accounts once.
+5. Replace the JSON save/load functions with database queries.
+
+Catbox profile and chat media can remain as URLs in the database, so the
+database does not need to store large image or video files.
 
 ## Local Testing
 

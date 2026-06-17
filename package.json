@@ -8,5 +8,8 @@
   "scripts": {
     "check": "node --check server.js && node --check public/app.js",
     "start": "node server.js"
+  },
+  "dependencies": {
+    "web-push": "^3.6.7"
   }
 }

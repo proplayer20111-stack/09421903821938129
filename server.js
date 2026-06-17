@@ -3,6 +3,12 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const os = require("os");
+let webPush = null;
+try {
+  webPush = require("web-push");
+} catch {
+  webPush = null;
+}
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -26,6 +32,7 @@ const protectedDeviceIds = new Set();
 const connectedSockets = new Set();
 const kickVotes = new Map();
 const callKicks = new Map();
+const pushSubscriptions = new Map();
 let accounts = loadAccounts();
 
 const SITE_PASSWORD = process.env.SITE_PASSWORD || "Seth123";
@@ -38,6 +45,10 @@ const DEVICE_TIMEOUT_MS = 3 * 60 * 1000;
 const KICK_MAX_MS = 3 * 60 * 1000;
 const KICK_VOTE_TTL_MS = 45 * 1000;
 const GIPHY_API_KEY = process.env.GIPHY_API_KEY || "";
+const VAPID_KEYS = getVapidKeys();
+if (webPush && VAPID_KEYS.publicKey && VAPID_KEYS.privateKey) {
+  webPush.setVapidDetails(process.env.WEB_PUSH_CONTACT || "mailto:admin@example.com", VAPID_KEYS.publicKey, VAPID_KEYS.privateKey);
+}
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -143,6 +154,21 @@ const server = http.createServer(async (req, res) => {
       enabled: Boolean(GIPHY_API_KEY),
       giphyApiKey: GIPHY_API_KEY
     });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/push-config") {
+    if (!requireSiteAccess(req, res)) return;
+    sendJson(res, 200, {
+      enabled: Boolean(webPush && VAPID_KEYS.publicKey),
+      publicKey: webPush ? VAPID_KEYS.publicKey : ""
+    });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/push-subscribe") {
+    if (!requireSiteAccess(req, res)) return;
+    await handlePushSubscribe(req, res);
     return;
   }
 
@@ -375,6 +401,7 @@ function handleMessage(client, message) {
     joinRoom(client, "main");
     if (wasCallEmpty) {
       broadcastPresence({ type: "call-started", user: publicClient(client) }, client.id);
+      sendCallStartedPush(client);
     }
     broadcastPresence({ type: "presence-update", user: publicClient(client) });
     broadcastPresenceSync();
@@ -696,7 +723,11 @@ function publicClient(client) {
 
 function send(client, message) {
   if (client.socket.destroyed) return;
-  writeFrame(client.socket, Buffer.from(JSON.stringify(message)), 0x1);
+  try {
+    writeFrame(client.socket, Buffer.from(JSON.stringify(message)), 0x1);
+  } catch {
+    disconnectClient(client);
+  }
 }
 
 function writeFrame(socket, payload, opcode) {
@@ -735,6 +766,17 @@ function normalizeProfile(profile) {
 
 function sanitizeChat(text) {
   return String(text || "").trim().slice(0, 500);
+}
+
+function getVapidKeys() {
+  if (!webPush) return { publicKey: "", privateKey: "" };
+  if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+    return {
+      publicKey: process.env.VAPID_PUBLIC_KEY,
+      privateKey: process.env.VAPID_PRIVATE_KEY
+    };
+  }
+  return webPush.generateVAPIDKeys();
 }
 
 function sanitizeHttpsUrl(value) {
@@ -848,6 +890,54 @@ async function handleGifSend(req, res, url) {
     sendJson(res, 200, { chat, cooldownSeconds: auth.account.isAdmin ? 0 : 30 });
   } catch (error) {
     sendJson(res, 400, { error: error.message || "could not send GIF" });
+  }
+}
+
+async function handlePushSubscribe(req, res) {
+  const auth = requireAccount(req, res);
+  if (!auth) return;
+  if (!webPush || !VAPID_KEYS.publicKey) {
+    sendJson(res, 503, { error: "push notifications are not enabled on this server" });
+    return;
+  }
+
+  try {
+    const body = await readJson(req);
+    const subscription = body.subscription;
+    const endpoint = String(subscription?.endpoint || "");
+    if (!endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) {
+      sendJson(res, 400, { error: "bad push subscription" });
+      return;
+    }
+
+    pushSubscriptions.set(endpoint, {
+      username: auth.username,
+      deviceId: getDeviceId(req, body),
+      subscription
+    });
+    sendJson(res, 200, { ok: true });
+  } catch {
+    sendJson(res, 400, { error: "could not save push subscription" });
+  }
+}
+
+function sendCallStartedPush(starter) {
+  if (!webPush || !pushSubscriptions.size) return;
+  const title = "Call started";
+  const body = `${starter.profile?.name || starter.name || "Someone"} joined the call`;
+  const payload = JSON.stringify({
+    title,
+    body,
+    tag: "aba-call-started",
+    url: "/",
+    icon: "/icon.svg"
+  });
+
+  for (const [endpoint, item] of [...pushSubscriptions.entries()]) {
+    if (item.username === starter.account) continue;
+    webPush.sendNotification(item.subscription, payload).catch((error) => {
+      if ([404, 410].includes(error?.statusCode)) pushSubscriptions.delete(endpoint);
+    });
   }
 }
 
