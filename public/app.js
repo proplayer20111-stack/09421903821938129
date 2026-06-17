@@ -1117,9 +1117,12 @@ async function handleSignal(message) {
   }
 
   if (message.type === "peer-joined") {
-    renderParticipant(message.peer.id, message.peer.profile, false, true);
-    playJoinSound();
+    updateOnlineUser({
+      ...message.peer,
+      inCall: true
+    });
     await createPeer(message.peer, false);
+    playJoinSound();
     return;
   }
 
@@ -1148,7 +1151,8 @@ async function handleSignal(message) {
   if (message.type === "offer") {
     const peer = await ensurePeer({
       id: message.from,
-      profile: message.profile || profileFromName(message.name)
+      profile: message.profile || profileFromName(message.name),
+      deviceType: message.deviceType
     });
     await peer.connection.setRemoteDescription(message.offer);
     peer.remoteReady = true;
@@ -1156,7 +1160,7 @@ async function handleSignal(message) {
     const answer = await peer.connection.createAnswer();
     answer.sdp = improveAudioSdp(answer.sdp);
     await peer.connection.setLocalDescription(answer);
-    send({ type: "answer", to: message.from, answer });
+    send({ type: "answer", to: message.from, answer, deviceType: state.deviceType });
     return;
   }
 
@@ -1204,7 +1208,8 @@ async function createPeer(peerInfo, initiator) {
     type: "offer",
     to: peerInfo.id,
     offer,
-    profile: publicProfile()
+    profile: publicProfile(),
+    deviceType: state.deviceType
   });
 }
 
@@ -1219,7 +1224,8 @@ async function restartPeerIce(peer) {
       type: "offer",
       to: peer.id,
       offer,
-      profile: publicProfile()
+      profile: publicProfile(),
+      deviceType: state.deviceType
     });
   } catch {
   }
@@ -1261,7 +1267,7 @@ async function ensurePeer(peerInfo) {
 
   connection.addEventListener("icecandidate", (event) => {
     if (event.candidate) {
-      send({ type: "ice", to: peerInfo.id, candidate: event.candidate });
+      send({ type: "ice", to: peerInfo.id, candidate: event.candidate, deviceType: state.deviceType });
     }
   });
 

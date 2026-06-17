@@ -144,6 +144,14 @@ Do not put `DATABASE_URL` in GitHub, source code, screenshots, or chat. Store it
 only as a Render environment variable and in a local `.env` file if local
 database testing is needed.
 
+## Automatic Resource Protection
+
+The server silently limits temporary chat history, upload buffers, WebSocket
+buffers, sessions, notification subscriptions, cooldowns, and stale call
+records. Expired messages are removed gradually, with stronger cleanup if the
+server approaches its 500 MB memory limit. This runs entirely behind the
+scenes and does not collect analytics or add anything to the site interface.
+
 ## Local Testing
 
 Run:

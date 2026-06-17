@@ -43,6 +43,9 @@ const pushSubscriptions = new Map();
 let accounts = loadAccounts();
 let databasePool = null;
 let databaseSaveChain = Promise.resolve();
+const databaseSaveTimers = new Map();
+const databasePendingValues = new Map();
+let activeUploads = 0;
 
 const SITE_PASSWORD = process.env.SITE_PASSWORD || "Seth123";
 const SITE_TOKEN = crypto.createHash("sha256").update(`site:${SITE_PASSWORD}`).digest("hex");
@@ -53,6 +56,17 @@ const MEDIA_COOLDOWN_MS = 30 * 1000;
 const DEVICE_TIMEOUT_MS = 3 * 60 * 1000;
 const KICK_MAX_MS = 3 * 60 * 1000;
 const KICK_VOTE_TTL_MS = 45 * 1000;
+const MAX_CHAT_MESSAGES = 500;
+const MAX_CHAT_BYTES = 4 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+const MAX_CONCURRENT_UPLOADS = 2;
+const MAX_SOCKET_BUFFER_BYTES = 1024 * 1024;
+const MAX_ACCOUNTS = 5000;
+const MAX_PUSH_SUBSCRIPTIONS = 1000;
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const PUSH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const MEMORY_SOFT_RSS_BYTES = 350 * 1024 * 1024;
+const MEMORY_HARD_RSS_BYTES = 425 * 1024 * 1024;
 const GIPHY_API_KEY = process.env.GIPHY_API_KEY || "";
 const VAPID_KEYS = getVapidKeys();
 if (webPush && VAPID_KEYS.publicKey && VAPID_KEYS.privateKey) {
@@ -261,6 +275,11 @@ server.on("upgrade", (req, socket) => {
   send(client, { type: "hello", id: client.id });
 
   socket.on("data", (chunk) => {
+    if (client.buffer.length + chunk.length > MAX_SOCKET_BUFFER_BYTES) {
+      client.socket.destroy();
+      disconnectClient(client);
+      return;
+    }
     client.buffer = Buffer.concat([client.buffer, chunk]);
     readFrames(client);
   });
@@ -466,7 +485,7 @@ function handleMessage(client, message) {
       text,
       createdAt: new Date().toISOString()
     };
-    chatMessages.push(chat);
+    storeChatMessage(chat);
     broadcastPresence(chat);
     return;
   }
@@ -488,7 +507,8 @@ function handleMessage(client, message) {
       ...message,
       from: client.id,
       name: client.name,
-      profile: client.profile
+      profile: client.profile,
+      deviceType: normalizeDeviceType(client.deviceType)
     });
   }
 }
@@ -800,16 +820,20 @@ function sanitizeKickReason(text) {
 }
 
 async function handleProfileUpload(req, res) {
+  let file = null;
   try {
-    const file = await readMediaFile(req);
+    file = await readMediaFile(req);
     const url = await uploadToCatbox(file);
     sendJson(res, 200, { url, type: file.type });
   } catch (error) {
     const tooLarge = error.message === "Upload too large.";
     const badUpload = ["Upload must be multipart form data.", "No file was uploaded.", "Please upload an image or video."].includes(error.message);
-    sendJson(res, tooLarge ? 413 : badUpload ? 400 : 500, {
+    const busy = error.message === "Upload capacity reached.";
+    sendJson(res, tooLarge ? 413 : badUpload ? 400 : busy ? 503 : 500, {
       error: tooLarge ? "That file is too large." : error.message || "Could not upload to Catbox."
     });
+  } finally {
+    file?.release?.();
   }
 }
 
@@ -825,8 +849,9 @@ async function handleMediaUpload(req, res, url) {
     return;
   }
 
+  let file = null;
   try {
-    const file = await readMediaFile(req);
+    file = await readMediaFile(req);
     const mediaUrl = await uploadToCatbox(file);
     mediaCooldowns.set(auth.username, now);
 
@@ -845,16 +870,18 @@ async function handleMediaUpload(req, res, url) {
       expiresAt: new Date(now + MEDIA_TTL_MS).toISOString(),
       createdAt: new Date(now).toISOString()
     };
-    chatMessages.push(chat);
-    pruneChatMessages();
+    storeChatMessage(chat);
     broadcastPresence(chat);
     sendJson(res, 200, { chat, cooldownSeconds: auth.account.isAdmin ? 0 : 30 });
   } catch (error) {
     const tooLarge = error.message === "Upload too large.";
     const badUpload = ["Upload must be multipart form data.", "No file was uploaded.", "Please upload an image or video."].includes(error.message);
-    sendJson(res, tooLarge ? 413 : badUpload ? 400 : 500, {
+    const busy = error.message === "Upload capacity reached.";
+    sendJson(res, tooLarge ? 413 : badUpload ? 400 : busy ? 503 : 500, {
       error: tooLarge ? "That file is too large." : error.message || "Could not upload to Catbox."
     });
+  } finally {
+    file?.release?.();
   }
 }
 
@@ -893,8 +920,7 @@ async function handleGifSend(req, res, url) {
     chat.provider = String(payload.provider || "giphy").trim().slice(0, 30) || "giphy";
 
     mediaCooldowns.set(auth.username, now);
-    chatMessages.push(chat);
-    pruneChatMessages();
+    storeChatMessage(chat);
     broadcastPresence(chat);
     sendJson(res, 200, { chat, cooldownSeconds: auth.account.isAdmin ? 0 : 30 });
   } catch (error) {
@@ -922,8 +948,12 @@ async function handlePushSubscribe(req, res) {
     pushSubscriptions.set(endpoint, {
       username: auth.username,
       deviceId: getDeviceId(req, body),
-      subscription
+      subscription,
+      updatedAt: Date.now()
     });
+    while (pushSubscriptions.size > MAX_PUSH_SUBSCRIPTIONS) {
+      pushSubscriptions.delete(pushSubscriptions.keys().next().value);
+    }
     sendJson(res, 200, { ok: true });
   } catch {
     sendJson(res, 400, { error: "could not save push subscription" });
@@ -951,16 +981,30 @@ function sendCallStartedPush(starter) {
 }
 
 async function readMediaFile(req) {
-  const contentType = req.headers["content-type"] || "";
-  if (!contentType.includes("multipart/form-data")) throw new Error("Upload must be multipart form data.");
+  if (activeUploads >= MAX_CONCURRENT_UPLOADS) throw new Error("Upload capacity reached.");
+  activeUploads += 1;
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    activeUploads = Math.max(0, activeUploads - 1);
+  };
 
-  const body = await readRequestBody(req, 200 * 1024 * 1024);
-  const file = parseMultipartFile(body, contentType, "file");
-  if (!file) throw new Error("No file was uploaded.");
-  if (!file.type.startsWith("image/") && !file.type.startsWith("video/")) {
-    throw new Error("Please upload an image or video.");
+  try {
+    const contentType = req.headers["content-type"] || "";
+    if (!contentType.includes("multipart/form-data")) throw new Error("Upload must be multipart form data.");
+
+    const body = await readRequestBody(req, MAX_UPLOAD_BYTES);
+    const file = parseMultipartFile(body, contentType, "file");
+    if (!file) throw new Error("No file was uploaded.");
+    if (!file.type.startsWith("image/") && !file.type.startsWith("video/")) {
+      throw new Error("Please upload an image or video.");
+    }
+    return { ...file, release };
+  } catch (error) {
+    release();
+    throw error;
   }
-  return file;
 }
 
 async function uploadToCatbox(file) {
@@ -1050,6 +1094,10 @@ async function handleSignup(req, res) {
 
     if (accounts[username]) {
       sendJson(res, 409, { error: "Account already exists." });
+      return;
+    }
+    if (Object.keys(accounts).length >= MAX_ACCOUNTS) {
+      sendJson(res, 503, { error: "Account storage is full. Ask the admin to remove an old account." });
       return;
     }
 
@@ -1443,15 +1491,73 @@ function getLocalIps() {
   return ips;
 }
 
-function pruneChatMessages() {
+function storeChatMessage(message) {
+  chatMessages.push(message);
+  pruneChatMessages(false);
+  while (chatMessages.length > MAX_CHAT_MESSAGES || chatStorageBytes() > MAX_CHAT_BYTES) {
+    chatMessages.shift();
+  }
+}
+
+function chatStorageBytes() {
+  return Buffer.byteLength(JSON.stringify(chatMessages), "utf8");
+}
+
+function pruneChatMessages(aggressive = false) {
   const now = Date.now();
+  let removed = 0;
+  const removalLimit = aggressive ? Number.POSITIVE_INFINITY : 25;
   for (let index = chatMessages.length - 1; index >= 0; index -= 1) {
     const message = chatMessages[index];
     const created = Date.parse(message.createdAt) || now;
     const ttl = ["media", "gif"].includes(message.kind) ? MEDIA_TTL_MS : CHAT_TTL_MS;
-    if (created < now - ttl) {
+    if (created < now - ttl && removed < removalLimit) {
       chatMessages.splice(index, 1);
+      removed += 1;
     }
+  }
+  const targetCount = aggressive ? 200 : MAX_CHAT_MESSAGES;
+  while (chatMessages.length > targetCount || chatStorageBytes() > MAX_CHAT_BYTES) {
+    chatMessages.shift();
+  }
+}
+
+function protectRuntimeResources() {
+  const now = Date.now();
+  const memory = process.memoryUsage();
+  const aggressive = memory.rss >= MEMORY_SOFT_RSS_BYTES;
+
+  pruneChatMessages(aggressive);
+  pruneMapByAge(sessions, now, SESSION_TTL_MS, (value) => value?.createdAt);
+  pruneMapByAge(siteSessions, now, 24 * 60 * 60 * 1000, (value) => value?.createdAt);
+  pruneMapByAge(mediaCooldowns, now, 5 * 60 * 1000, (value) => value);
+  pruneMapByAge(pushSubscriptions, now, PUSH_TTL_MS, (value) => value?.updatedAt);
+
+  for (const [ip, attempt] of accessAttempts) {
+    if (!attempt.lockedUntil || attempt.lockedUntil < now - ACCESS_TIMEOUT_MS) accessAttempts.delete(ip);
+  }
+  for (const [username, kick] of callKicks) {
+    if (!kick?.until || kick.until <= now) callKicks.delete(username);
+  }
+  for (const [id, vote] of kickVotes) {
+    if (Date.parse(vote.expiresAt || "") <= now) expireKickVote(id);
+  }
+  for (const [deviceId, until] of deviceTimeouts) {
+    if (until <= now) deviceTimeouts.delete(deviceId);
+  }
+
+  if (memory.rss >= MEMORY_HARD_RSS_BYTES) {
+    pruneChatMessages(true);
+    for (const client of [...connectedSockets]) {
+      if (!client.account || now - client.lastSeen > 60 * 1000) client.socket.destroy();
+    }
+  }
+}
+
+function pruneMapByAge(map, now, ttl, getTimestamp) {
+  for (const [key, value] of map) {
+    const timestamp = Number(getTimestamp(value)) || 0;
+    if (!timestamp || timestamp < now - ttl) map.delete(key);
   }
 }
 
@@ -1545,10 +1651,18 @@ async function initializeDatabaseStorage() {
 
 function queueDatabaseSave(key, value) {
   if (!databasePool) return;
-  const snapshot = JSON.parse(JSON.stringify(value));
-  databaseSaveChain = databaseSaveChain
-    .then(() => saveDatabaseState(key, snapshot))
-    .catch((error) => console.error(`Database save failed for ${key}:`, error.message));
+  databasePendingValues.set(key, JSON.parse(JSON.stringify(value)));
+  clearTimeout(databaseSaveTimers.get(key));
+  const timer = setTimeout(() => {
+    databaseSaveTimers.delete(key);
+    const snapshot = databasePendingValues.get(key);
+    databasePendingValues.delete(key);
+    databaseSaveChain = databaseSaveChain
+      .then(() => saveDatabaseState(key, snapshot))
+      .catch((error) => console.error(`Database save failed for ${key}:`, error.message));
+  }, 300);
+  timer.unref();
+  databaseSaveTimers.set(key, timer);
 }
 
 async function saveDatabaseState(key, value) {
@@ -1693,7 +1807,7 @@ async function startServer() {
 
 startServer();
 
-setInterval(pruneChatMessages, 60 * 60 * 1000).unref();
+setInterval(protectRuntimeResources, 5 * 60 * 1000).unref();
 setInterval(() => {
   const now = Date.now();
   for (const client of [...connectedSockets]) {
