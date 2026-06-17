@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Aba squads discord</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <section class="screen" id="gateScreen">
+      <div class="box auth-box">
+        <h1>Aba squads discord</h1>
+        <label>
+          Site password
+          <input id="sitePassword" type="password" maxlength="80" autocomplete="current-password" placeholder="password">
+        </label>
+        <button class="blue" id="siteButton" type="button">Enter</button>
+      </div>
+    </section>
+
+    <section class="screen" id="authScreen" hidden>
+      <div class="box auth-box">
+        <h1>Aba squads discord</h1>
+        <div class="tabs">
+          <button class="tab active" id="loginTab" type="button">Login</button>
+          <button class="tab" id="signupTab" type="button">Sign up</button>
+        </div>
+        <label>
+          Username
+          <input id="authName" maxlength="28" autocomplete="username" placeholder="name">
+        </label>
+        <label>
+          Password
+          <input id="authPassword" type="password" maxlength="80" autocomplete="current-password" placeholder="password">
+        </label>
+        <button class="blue" id="authButton" type="button">Login</button>
+      </div>
+    </section>
+
+    <section class="screen" id="timeoutScreen" hidden>
+      <div class="box auth-box timeout-box">
+        <h1>Timed out</h1>
+        <p class="timeout-note">This device has been paused.</p>
+        <div class="timeout-count" id="timeoutCountdown">3:00</div>
+      </div>
+    </section>
+
+    <section class="screen" id="deviceScreen" hidden>
+      <div class="box auth-box">
+        <h1>Phone access</h1>
+        <div class="device-actions">
+          <button class="blue" id="pcLayoutButton" type="button">Done</button>
+          <button class="plain" id="mobileLayoutButton" type="button" hidden>Mobile</button>
+        </div>
+        <p class="phone-note" id="phoneAccess" hidden></p>
+      </div>
+    </section>
+
+    <section class="screen" id="callScreen" hidden>
+      <div class="box app-box">
+        <div class="top">
+          <h1>Aba squads discord</h1>
+          <div>
+            <button class="plain" id="profileButton" type="button">profile</button>
+            <button class="plain" id="themeButton" type="button">themes</button>
+            <button class="plain" id="adminButton" type="button" hidden>admin</button>
+            <button class="plain" id="logoutButton" type="button">logout</button>
+          </div>
+        </div>
+
+        <div class="profile-row" id="profilePanel" hidden>
+          <div class="avatar" id="profilePreview"></div>
+          <div class="profile-fields">
+            <input id="profileName" maxlength="28" placeholder="name">
+            <input id="profileFile" type="file" accept="image/*,video/*">
+            <button class="small" id="saveProfileButton" type="button">save profile</button>
+          </div>
+        </div>
+
+        <div class="profile-row" id="themePanel" hidden>
+          <label>
+            Theme
+            <select id="themeMode">
+              <option value="white">white</option>
+              <option value="black">black</option>
+            </select>
+          </label>
+          <label>
+            Outlines
+            <select id="themeAccent">
+              <option value="blue">blue</option>
+              <option value="purple">purple</option>
+              <option value="green">green</option>
+              <option value="red">red</option>
+              <option value="pink">pink</option>
+              <option value="orange">orange</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="main-grid">
+          <div>
+            <div class="join-row" id="setupPanel">
+              <button class="blue" id="joinButton" type="button">Join call</button>
+            </div>
+
+            <div class="status" id="connectionState" hidden>offline</div>
+            <div class="mic-status" id="micStatus">mic not joined</div>
+            <div class="people" id="participants"></div>
+            <div class="kick-start-panel" id="kickStartPanel" hidden>
+              <h2 id="kickTargetTitle">Vote kick</h2>
+              <label>
+                Time
+                <select id="kickDuration">
+                  <option value="60000">1 minute</option>
+                  <option value="120000">2 minutes</option>
+                  <option value="180000">3 minutes</option>
+                </select>
+              </label>
+              <label>
+                Reason
+                <input id="kickReason" maxlength="140" placeholder="reason">
+              </label>
+              <div class="kick-actions">
+                <button class="blue" id="kickStartButton" type="button">start vote</button>
+                <button class="small" id="kickCancelButton" type="button">cancel</button>
+              </div>
+            </div>
+            <div class="kick-votes" id="kickVotes"></div>
+
+            <div class="admin-panel" id="adminPanel" hidden>
+              <h2>Accounts</h2>
+              <div id="accountList"></div>
+              <h2>Security alerts</h2>
+              <div id="securityList"></div>
+            </div>
+
+            <div class="controls" id="callControls" hidden>
+              <button class="small" id="muteButton" type="button" aria-pressed="false">mute</button>
+              <button class="red" id="leaveButton" type="button">leave</button>
+            </div>
+          </div>
+
+          <aside class="chat-panel">
+            <h2>Chat</h2>
+            <div class="chat-log" id="chatLog"></div>
+            <form class="chat-form" id="chatForm">
+              <button class="small icon-button" id="mediaButton" type="button" title="upload media">+</button>
+              <input id="mediaFile" type="file" accept="image/*,video/*" hidden>
+              <input id="chatInput" maxlength="500" placeholder="message or link">
+              <button class="blue" type="submit">send</button>
+            </form>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <div class="volume-menu" id="volumeMenu" hidden>
+      <div class="volume-title" id="volumeTitle">volume</div>
+      <div class="volume-controls">
+        <button class="small" id="volumeDown" type="button">-</button>
+        <input id="volumeSlider" type="range" min="0" max="200" value="100">
+        <button class="small" id="volumeUp" type="button">+</button>
+      </div>
+      <button class="red vote-kick-menu" id="voteKickButton" type="button">vote kick</button>
+    </div>
+    <div id="audioMount" hidden></div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
