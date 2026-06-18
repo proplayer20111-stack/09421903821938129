@@ -511,13 +511,32 @@ function handleMessage(client, message) {
       }
     }
     client.screenSharing = enabled;
-    broadcast(client.room, {
-      type: "screen-share",
+    const announce = () => {
+      if (!client.room || client.screenSharing !== enabled) return;
+      broadcast(client.room, {
+        type: "screen-share",
+        from: client.id,
+        enabled,
+        profile: client.profile
+      });
+      broadcastPresence({ type: "presence-update", user: publicClient(client) });
+      broadcastPresenceSync();
+    };
+    announce();
+    setTimeout(announce, 750).unref();
+    setTimeout(announce, 2500).unref();
+    return;
+  }
+
+  if (message.type === "screen-share-sync-request") {
+    if (!client.account || !client.room || !client.inCall) return;
+    const target = findClient(message.to);
+    if (!target || target.room !== client.room || !target.screenSharing) return;
+    send(target, {
+      type: "screen-share-sync-request",
       from: client.id,
-      enabled,
-      profile: client.profile
+      attempt: Math.max(1, Math.min(5, Number(message.attempt) || 1))
     });
-    broadcastPresence({ type: "presence-update", user: publicClient(client) });
     return;
   }
 
@@ -582,7 +601,7 @@ function handleMessage(client, message) {
     return;
   }
 
-  if (["offer", "answer", "ice"].includes(message.type)) {
+  if (["offer", "answer", "ice", "screen-offer", "screen-answer", "screen-ice"].includes(message.type)) {
     const target = findClient(message.to);
     if (!target || target.room !== client.room) return;
     send(target, {

@@ -503,6 +503,21 @@ select:focus {
   -webkit-backdrop-filter: blur(8px);
 }
 
+.screen-share-status {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  z-index: 2;
+  transform: translateX(-50%);
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  background: rgba(5, 7, 11, 0.76);
+  color: #ffffff;
+  border-radius: 999px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .screen-share-video {
   display: block;
   width: 100%;
