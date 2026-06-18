@@ -137,6 +137,9 @@ const state = {
 const rtcConfig = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
 };
+let lastMobileTouchEnd = 0;
+let lastMobileTouchTarget = null;
+let visualViewportFrame = null;
 
 siteButton.addEventListener("click", enterSite);
 sitePassword.addEventListener("keydown", (event) => {
@@ -219,6 +222,19 @@ kickVotes.addEventListener("click", (event) => {
 document.addEventListener("click", (event) => {
   if (!volumeMenu.hidden && !volumeMenu.contains(event.target)) closeVolumeMenu();
 });
+document.addEventListener("gesturestart", preventMobileZoom, { passive: false });
+document.addEventListener("gesturechange", preventMobileZoom, { passive: false });
+document.addEventListener("gestureend", preventMobileZoom, { passive: false });
+document.addEventListener("touchmove", (event) => {
+  if (event.touches.length > 1) event.preventDefault();
+}, { passive: false });
+document.addEventListener("touchend", (event) => {
+  if (state.deviceType !== "mobile" && !matchMedia("(max-width: 760px)").matches) return;
+  const now = Date.now();
+  if (event.target === lastMobileTouchTarget && now - lastMobileTouchEnd < 300) event.preventDefault();
+  lastMobileTouchEnd = now;
+  lastMobileTouchTarget = event.target;
+}, { passive: false });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
     if (state.inCall) requestWakeLock();
@@ -228,7 +244,11 @@ document.addEventListener("visibilitychange", () => {
     stopAudioMeter();
   }
 });
-window.addEventListener("resize", closeVolumeMenu);
+window.addEventListener("resize", () => {
+  closeVolumeMenu();
+  scheduleVisualViewportSync();
+});
+window.visualViewport?.addEventListener("resize", scheduleVisualViewportSync);
 window.addEventListener("beforeunload", () => {
   state.manualDisconnect = true;
   sendLeaveNow();
@@ -247,6 +267,7 @@ window.addEventListener("pageshow", () => {
 boot();
 
 async function boot() {
+  syncVisualViewport();
   localStorage.removeItem("callroom.profile");
   localStorage.removeItem("callroom.server");
   localStorage.removeItem("callroom.ui.v1");
@@ -269,6 +290,30 @@ async function boot() {
   state.siteToken = siteToken;
   hideGate();
   continueAfterDevice();
+}
+
+function preventMobileZoom(event) {
+  if (state.deviceType === "mobile" || matchMedia("(max-width: 760px)").matches) {
+    event.preventDefault();
+  }
+}
+
+function syncVisualViewport() {
+  const viewport = window.visualViewport;
+  const width = Math.max(1, Math.round(viewport?.width || window.innerWidth));
+  const height = Math.max(1, Math.round(viewport?.height || window.innerHeight));
+  const scale = viewport?.scale || 1;
+  document.documentElement.style.setProperty("--visual-width", `${width}px`);
+  document.documentElement.style.setProperty("--visual-height", `${height}px`);
+  document.body.dataset.zoomed = scale > 1.05 ? "true" : "false";
+}
+
+function scheduleVisualViewportSync() {
+  if (visualViewportFrame) return;
+  visualViewportFrame = requestAnimationFrame(() => {
+    visualViewportFrame = null;
+    syncVisualViewport();
+  });
 }
 
 function continueAfterDevice() {

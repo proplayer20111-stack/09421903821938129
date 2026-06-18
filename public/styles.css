@@ -3,6 +3,8 @@
 }
 
 :root {
+  --visual-width: 100vw;
+  --visual-height: 100vh;
   --bg: #ffffff;
   --panel: rgba(255, 255, 255, 0.58);
   --panel-strong: rgba(255, 255, 255, 0.76);
@@ -90,6 +92,7 @@ body {
   color: var(--text);
   font-family: Arial, sans-serif;
   transition: background 220ms ease, color 180ms ease;
+  overscroll-behavior-x: none;
 }
 
 button,
@@ -476,6 +479,8 @@ select:focus {
 
 .profile-row {
   align-items: start;
+  min-width: 0;
+  max-width: 100%;
   padding: 12px;
   margin-bottom: 12px;
   border-radius: var(--radius-md);
@@ -781,10 +786,25 @@ select:focus {
   display: grid;
   gap: 8px;
   flex: 1;
+  min-width: 0;
+  width: 100%;
 }
 
 .profile-fields input {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 38px;
+}
+
+#profileFile {
+  overflow: hidden;
+}
+
+#profileFile::file-selector-button {
+  max-width: 52%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .controls {
@@ -967,14 +987,14 @@ select:focus {
   }
 }
 
-@media (max-width: 560px) {
+@media (max-width: 760px) {
   :root {
     --panel: #ffffff;
     --panel-strong: #ffffff;
     --soft: #eff6ff;
     --light: #f8fbff;
-    --shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
-    --shadow-soft: 0 4px 14px rgba(15, 23, 42, 0.07);
+    --shadow: none;
+    --shadow-soft: none;
     --blur: none;
     --radius-lg: 22px;
     --radius-md: 18px;
@@ -997,7 +1017,10 @@ select:focus {
 
   html,
   body {
-    touch-action: pan-x pan-y;
+    width: min(100%, var(--visual-width));
+    max-width: var(--visual-width);
+    touch-action: pan-y;
+    overflow-x: clip;
   }
 
   input,
@@ -1007,6 +1030,8 @@ select:focus {
 
   .screen {
     display: block;
+    width: var(--visual-width);
+    max-width: var(--visual-width);
     min-height: 100dvh;
     padding:
       max(8px, env(safe-area-inset-top))
@@ -1021,6 +1046,7 @@ select:focus {
   }
 
   .box {
+    width: 100%;
     max-width: 100%;
     padding: 14px;
     border-radius: var(--radius-lg);
@@ -1029,7 +1055,7 @@ select:focus {
 
   .app-box {
     min-height: calc(100dvh - 18px);
-    overflow: visible;
+    overflow: clip;
   }
 
   h1 {
@@ -1141,7 +1167,36 @@ select:focus {
   }
 
   .profile-row {
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .profile-row > .avatar {
+    justify-self: center;
+  }
+
+  .profile-fields,
+  .profile-fields input,
+  .profile-row label,
+  .profile-row select {
+    min-width: 0;
+    max-width: 100%;
+    width: 100%;
+  }
+
+  #profileFile {
+    display: block;
+    padding: 6px;
+  }
+
+  body[data-zoomed="true"] .top-actions {
+    grid-template-columns: 1fr;
+  }
+
+  body[data-zoomed="true"] .chat-form {
+    grid-template-columns: 40px 40px minmax(0, 1fr);
   }
 
   .volume-menu {
@@ -1160,6 +1215,16 @@ select:focus {
   button:hover:not(:disabled) {
     transform: none;
     box-shadow: none;
+  }
+
+  .box,
+  .profile-row,
+  .person,
+  .chat-entry,
+  .kick-card,
+  .gif-panel {
+    animation: none;
+    transition: none;
   }
 }
 
