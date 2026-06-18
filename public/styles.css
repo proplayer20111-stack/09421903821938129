@@ -479,6 +479,7 @@ select:focus {
 }
 
 .screen-share-view {
+  position: relative;
   flex: 0 0 100%;
   width: 100%;
   aspect-ratio: 16 / 9;
@@ -488,12 +489,50 @@ select:focus {
   border-radius: 14px;
 }
 
+.screen-share-enlarge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  padding: 5px 9px;
+  border-color: rgba(255, 255, 255, 0.46);
+  background: rgba(5, 7, 11, 0.74);
+  color: #ffffff;
+  font-size: 12px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
 .screen-share-video {
   display: block;
   width: 100%;
   height: 100%;
   object-fit: contain;
   background: #05070b;
+}
+
+.screen-share-view:fullscreen,
+.screen-share-view.screen-share-expanded {
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  max-height: none;
+  aspect-ratio: auto;
+  border: 0;
+  border-radius: 0;
+  background: #05070b;
+}
+
+.screen-share-view.screen-share-expanded {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+}
+
+.screen-share-view:fullscreen .screen-share-enlarge,
+.screen-share-view.screen-share-expanded .screen-share-enlarge {
+  top: max(12px, env(safe-area-inset-top));
+  right: max(12px, env(safe-area-inset-right));
 }
 
 .person.screen-sharing {

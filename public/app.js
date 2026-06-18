@@ -200,9 +200,15 @@ leaveButton.addEventListener("click", () => leaveCall());
 muteButton.addEventListener("click", toggleMute);
 shareScreenButton.addEventListener("click", toggleScreenShare);
 participants.addEventListener("click", (event) => {
+  const enlarge = event.target.closest(".screen-share-enlarge");
+  if (enlarge) {
+    toggleScreenShareFullscreen(enlarge);
+    return;
+  }
   const button = event.target.closest(".peer-mute");
   if (button) togglePeerMute(button.dataset.id);
 });
+document.addEventListener("fullscreenchange", updateScreenShareFullscreenButtons);
 participants.addEventListener("contextmenu", (event) => {
   const card = event.target.closest(".person");
   if (!card || card.dataset.local === "true") return;
@@ -1510,7 +1516,29 @@ async function createPeer(peerInfo, initiator) {
   const peer = await ensurePeer(peerInfo);
 
   if (!initiator) return peer;
+  await negotiatePeer(peer);
+  return peer;
+}
 
+async function negotiatePeer(peer) {
+  if (!peer || peer.connection.connectionState === "closed") return;
+  if (peer.negotiationInFlight) {
+    peer.negotiationQueued = true;
+    return;
+  }
+  if (peer.connection.signalingState !== "stable") {
+    peer.negotiationQueued = true;
+    clearTimeout(peer.negotiationTimer);
+    peer.negotiationTimer = setTimeout(() => {
+      peer.negotiationQueued = false;
+      negotiatePeer(peer);
+    }, 150);
+    return;
+  }
+
+  clearTimeout(peer.negotiationTimer);
+  peer.negotiationTimer = null;
+  peer.negotiationInFlight = true;
   peer.makingOffer = true;
   try {
     const offer = await peer.connection.createOffer();
@@ -1518,19 +1546,25 @@ async function createPeer(peerInfo, initiator) {
     await peer.connection.setLocalDescription(offer);
     send({
       type: "offer",
-      to: peerInfo.id,
+      to: peer.id,
       offer,
       profile: publicProfile(),
       deviceType: state.deviceType
     });
+  } catch {
   } finally {
     peer.makingOffer = false;
+    peer.negotiationInFlight = false;
+    if (peer.negotiationQueued) {
+      peer.negotiationQueued = false;
+      clearTimeout(peer.negotiationTimer);
+      peer.negotiationTimer = setTimeout(() => negotiatePeer(peer), 150);
+    }
   }
-  return peer;
 }
 
 async function restartPeerIce(peer) {
-  if (!peer || peer.connection.connectionState === "closed" || peer.restartInFlight) return;
+  if (!peer || peer.connection.connectionState === "closed" || peer.restartInFlight || peer.negotiationInFlight) return;
   if (Date.now() - peer.lastRestartAt < 8000) return;
   peer.restartInFlight = true;
   peer.lastRestartAt = Date.now();
@@ -1702,6 +1736,9 @@ async function ensurePeer(peerInfo) {
     recovering: false,
     makingOffer: false,
     ignoreOffer: false,
+    negotiationInFlight: false,
+    negotiationQueued: false,
+    negotiationTimer: null,
     lastRestartAt: 0,
     lastInboundPackets: null,
     lastInboundLost: null,
@@ -1807,7 +1844,8 @@ function renderParticipant(id, profile, local, inCall) {
     <div class="tag"></div>
     <button class="small peer-mute" type="button">mute</button>
     <div class="screen-share-view" hidden>
-      <video class="screen-share-video" autoplay playsinline></video>
+      <button class="small screen-share-enlarge" type="button" aria-label="enlarge screen share">enlarge</button>
+      <video class="screen-share-video" autoplay muted playsinline></video>
     </div>
   `;
   participants.append(card);
@@ -1924,6 +1962,7 @@ function removePeer(id, removeCard) {
   const peer = state.peers.get(id);
   if (peer) {
     clearTimeout(peer.reconnectTimer);
+    clearTimeout(peer.negotiationTimer);
     peer.boostSource?.disconnect();
     peer.boostGain?.disconnect();
     peer.connection.close();
@@ -2015,6 +2054,7 @@ async function toggleScreenShare() {
       if (!peer.screenSender) return;
       await peer.screenSender.replaceTrack(track);
       await tuneScreenSender(peer.screenSender);
+      await negotiatePeer(peer);
     }));
 
     setScreenShareCard(state.id, true, displayStream);
@@ -2041,6 +2081,7 @@ async function stopScreenShare(notifyServer = true) {
   await Promise.all([...state.peers.values()].map(async (peer) => {
     if (!peer.screenSender) return;
     await peer.screenSender.replaceTrack(null).catch(() => {});
+    await negotiatePeer(peer);
   }));
   stream?.getTracks().forEach((track) => track.stop());
   setScreenShareCard(state.id, false);
@@ -2075,10 +2116,12 @@ function setScreenShareCard(id, enabled, stream = null) {
   view.hidden = !enabled;
   if (stream && video.srcObject !== stream) {
     video.srcObject = stream;
-    video.muted = id === state.id;
+    video.muted = true;
     video.play().catch(() => {});
   }
   if (!enabled) {
+    if (document.fullscreenElement === view) document.exitFullscreen().catch(() => {});
+    view.classList.remove("screen-share-expanded");
     video.pause();
     video.srcObject = null;
     const local = card.dataset.local === "true";
@@ -2093,6 +2136,38 @@ function setScreenShareCard(id, enabled, stream = null) {
     card.querySelector(".tag").textContent = "sharing screen";
   }
   updatePopups();
+}
+
+async function toggleScreenShareFullscreen(button) {
+  const view = button.closest(".screen-share-view");
+  if (!view) return;
+  try {
+    if (document.fullscreenElement === view) {
+      await document.exitFullscreen();
+    } else if (view.requestFullscreen) {
+      await view.requestFullscreen();
+    } else {
+      view.classList.toggle("screen-share-expanded");
+      updateScreenShareFullscreenButtons();
+    }
+  } catch {
+    view.classList.toggle("screen-share-expanded");
+    updateScreenShareFullscreenButtons();
+  }
+}
+
+function updateScreenShareFullscreenButtons() {
+  for (const view of document.querySelectorAll(".screen-share-view")) {
+    if (document.fullscreenElement && document.fullscreenElement !== view) {
+      view.classList.remove("screen-share-expanded");
+    }
+    const expanded = document.fullscreenElement === view || view.classList.contains("screen-share-expanded");
+    const button = view.querySelector(".screen-share-enlarge");
+    if (button) {
+      button.textContent = expanded ? "shrink" : "enlarge";
+      button.setAttribute("aria-label", expanded ? "shrink screen share" : "enlarge screen share");
+    }
+  }
 }
 
 function toggleMute() {
