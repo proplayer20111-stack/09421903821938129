@@ -529,9 +529,9 @@ function handleMessage(client, message) {
   }
 
   if (message.type === "screen-share-sync-request") {
-    if (!client.account || !client.room || !client.inCall) return;
-    const target = findClient(message.to);
-    if (!target || target.room !== client.room || !target.screenSharing) return;
+    if (!client.account) return;
+    const target = findConnectedClient(message.to);
+    if (!target?.account || !target.screenSharing) return;
     send(target, {
       type: "screen-share-sync-request",
       from: client.id,
@@ -601,7 +601,21 @@ function handleMessage(client, message) {
     return;
   }
 
-  if (["offer", "answer", "ice", "screen-offer", "screen-answer", "screen-ice"].includes(message.type)) {
+  if (["screen-offer", "screen-answer", "screen-ice"].includes(message.type)) {
+    if (!client.account) return;
+    const target = findConnectedClient(message.to);
+    if (!target?.account) return;
+    send(target, {
+      ...message,
+      from: client.id,
+      name: client.name,
+      profile: client.profile,
+      deviceType: normalizeDeviceType(client.deviceType)
+    });
+    return;
+  }
+
+  if (["offer", "answer", "ice"].includes(message.type)) {
     const target = findClient(message.to);
     if (!target || target.room !== client.room) return;
     send(target, {
@@ -857,6 +871,13 @@ function findClient(id) {
     for (const client of members) {
       if (client.id === id) return client;
     }
+  }
+  return null;
+}
+
+function findConnectedClient(id) {
+  for (const client of connectedSockets) {
+    if (client.id === id) return client;
   }
   return null;
 }

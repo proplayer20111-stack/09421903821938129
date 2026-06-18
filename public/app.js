@@ -1474,9 +1474,6 @@ async function handleSignal(message) {
       inCall: true
     });
     await createPeer(message.peer, false);
-    if (state.screenSharing) {
-      setTimeout(() => createScreenSenderPeer(message.peer.id, true), 250);
-    }
     playJoinSound();
     return;
   }
@@ -1932,6 +1929,7 @@ function syncOnlineUsers(users) {
   state.onlineUsers.clear();
   for (const user of users) updateOnlineUser(user, false);
   updateOnlineCounter();
+  if (state.screenSharing) syncScreenShareViewers();
 }
 
 function updateOnlineUser(user, updateCounter = true) {
@@ -1944,6 +1942,9 @@ function updateOnlineUser(user, updateCounter = true) {
   }
   if (updateCounter) updateOnlineCounter();
   updateKickAvailability();
+  if (state.screenSharing && user.id !== state.id) {
+    setTimeout(() => createScreenSenderPeer(user.id), 100);
+  }
 }
 
 function updateOnlineCounter() {
@@ -2055,7 +2056,7 @@ async function toggleScreenShare() {
   try {
     displayStream = await navigator.mediaDevices.getDisplayMedia({
       video: {
-        frameRate: { ideal: 12, max: 15 }
+        frameRate: { ideal: 20, max: 20 }
       },
       audio: false
     });
@@ -2070,7 +2071,7 @@ async function toggleScreenShare() {
     await track.applyConstraints({
       width: { max: 1280 },
       height: { max: 720 },
-      frameRate: { max: 15 }
+      frameRate: { max: 20 }
     }).catch(() => {});
 
     state.screenStream = displayStream;
@@ -2089,7 +2090,7 @@ async function toggleScreenShare() {
       if (state.screenSharing) send({ type: "screen-share", enabled: true });
     }, 4000);
 
-    await Promise.all([...state.peers.keys()].map((peerId) => createScreenSenderPeer(peerId, true)));
+    await Promise.all(screenViewerIds().map((peerId) => createScreenSenderPeer(peerId, true)));
 
     showToast("screen sharing started");
   } catch (error) {
@@ -2124,8 +2125,8 @@ async function tuneScreenSender(sender) {
   try {
     const params = sender.getParameters();
     if (!params.encodings || !params.encodings.length) params.encodings = [{}];
-    params.encodings[0].maxBitrate = 1000000;
-    params.encodings[0].maxFramerate = 15;
+    params.encodings[0].maxBitrate = 1500000;
+    params.encodings[0].maxFramerate = 20;
     params.degradationPreference = "maintain-resolution";
     await sender.setParameters(params);
   } catch {
@@ -2218,7 +2219,7 @@ function createScreenPeerRecord(id, mode, screenId = crypto.randomUUID?.() || `$
 }
 
 async function createScreenSenderPeer(peerId, recreate = false) {
-  if (!state.screenSharing || state.screenTrack?.readyState !== "live" || !state.peers.has(peerId)) return;
+  if (!state.screenSharing || state.screenTrack?.readyState !== "live" || peerId === state.id || !state.onlineUsers.has(peerId)) return;
   if (recreate) closeScreenPeer(peerId);
   const existing = state.screenPeers.get(peerId);
   if (existing?.mode === "sender" && existing.connection.connectionState !== "closed") return existing;
@@ -2245,7 +2246,7 @@ async function createScreenSenderPeer(peerId, recreate = false) {
 }
 
 async function handleScreenOffer(message) {
-  if (!state.inCall || !message.from || !message.offer) return;
+  if (!state.token || !message.from || !message.offer) return;
   closeScreenPeer(message.from);
   const screenPeer = createScreenPeerRecord(message.from, "receiver", String(message.screenId || ""));
   try {
@@ -2307,9 +2308,22 @@ function closeAllScreenPeers() {
   for (const id of [...state.screenPeers.keys()]) closeScreenPeer(id);
 }
 
+function screenViewerIds() {
+  return [...state.onlineUsers.keys()].filter((id) => id && id !== state.id);
+}
+
+function syncScreenShareViewers() {
+  if (!state.screenSharing) return;
+  const viewers = new Set(screenViewerIds());
+  for (const id of viewers) createScreenSenderPeer(id);
+  for (const [id, screenPeer] of state.screenPeers) {
+    if (screenPeer.mode === "sender" && !viewers.has(id)) closeScreenPeer(id);
+  }
+}
+
 async function refreshScreenShareForPeer(peerId, attempt = 1) {
   if (!state.screenSharing || state.screenTrack?.readyState !== "live") return;
-  if (!state.peers.has(peerId)) return;
+  if (!state.onlineUsers.has(peerId) || peerId === state.id) return;
   try {
     await createScreenSenderPeer(peerId, true);
   } catch {
@@ -2320,7 +2334,7 @@ async function refreshScreenShareForPeer(peerId, attempt = 1) {
 }
 
 function requestScreenShareSync(screenPeer) {
-  if (!screenPeer || !state.inCall || !state.onlineUsers.get(screenPeer.id)?.screenSharing) return;
+  if (!screenPeer || !state.token || !state.onlineUsers.get(screenPeer.id)?.screenSharing) return;
   screenPeer.syncAttempts = Math.min(5, (screenPeer.syncAttempts || 0) + 1);
   send({
     type: "screen-share-sync-request",
