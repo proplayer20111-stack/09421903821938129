@@ -308,6 +308,7 @@ server.on("upgrade", (req, socket) => {
     deviceId: "",
     deviceType: "pc",
     inCall: false,
+    screenSharing: false,
     room: null,
     socket,
     buffer: Buffer.alloc(0),
@@ -443,6 +444,7 @@ function handleMessage(client, message) {
     client.profile = normalizeProfile(account.profile || { name: session.username });
     client.name = client.profile.name;
     client.inCall = false;
+    client.screenSharing = false;
     send(client, {
       type: "presence-list",
       self: client.id,
@@ -469,6 +471,7 @@ function handleMessage(client, message) {
     client.profile = normalizeProfile(message.profile || { name: message.name });
     client.name = client.profile.name;
     client.deviceType = normalizeDeviceType(message.deviceType || client.deviceType);
+    client.screenSharing = false;
     const wasCallEmpty = !rooms.get("main")?.size;
     client.inCall = true;
     joinRoom(client, "main");
@@ -486,6 +489,35 @@ function handleMessage(client, message) {
     leaveRoom(client);
     broadcastPresence({ type: "presence-update", user: publicClient(client) });
     broadcastPresenceSync();
+    return;
+  }
+
+  if (message.type === "screen-share") {
+    if (!client.account || !client.room || !client.inCall) return;
+    const enabled = message.enabled === true;
+    if (enabled) {
+      if (client.deviceType !== "pc") {
+        send(client, { type: "screen-share-denied", message: "screen sharing is only available on PC" });
+        return;
+      }
+      const activeSharer = [...(rooms.get(client.room) || [])]
+        .find((member) => member.id !== client.id && member.screenSharing);
+      if (activeSharer) {
+        send(client, {
+          type: "screen-share-denied",
+          message: `${activeSharer.profile?.name || activeSharer.name || "someone"} is already sharing`
+        });
+        return;
+      }
+    }
+    client.screenSharing = enabled;
+    broadcast(client.room, {
+      type: "screen-share",
+      from: client.id,
+      enabled,
+      profile: client.profile
+    });
+    broadcastPresence({ type: "presence-update", user: publicClient(client) });
     return;
   }
 
@@ -572,7 +604,8 @@ function joinRoom(client, room) {
     id: peer.id,
     name: peer.name,
     profile: peer.profile,
-    deviceType: normalizeDeviceType(peer.deviceType)
+    deviceType: normalizeDeviceType(peer.deviceType),
+    screenSharing: Boolean(peer.screenSharing)
   }));
   rooms.get(room).add(client);
 
@@ -585,7 +618,13 @@ function joinRoom(client, room) {
 
   broadcast(room, {
     type: "peer-joined",
-    peer: { id: client.id, name: client.name, profile: client.profile, deviceType: normalizeDeviceType(client.deviceType) }
+    peer: {
+      id: client.id,
+      name: client.name,
+      profile: client.profile,
+      deviceType: normalizeDeviceType(client.deviceType),
+      screenSharing: Boolean(client.screenSharing)
+    }
   }, client.id);
 }
 
@@ -593,6 +632,15 @@ function leaveRoom(client) {
   if (!client.room || !rooms.has(client.room)) return;
 
   const room = client.room;
+  if (client.screenSharing) {
+    client.screenSharing = false;
+    broadcast(room, {
+      type: "screen-share",
+      from: client.id,
+      enabled: false,
+      profile: client.profile
+    }, client.id);
+  }
   rooms.get(room).delete(client);
   if (rooms.get(room).size === 0) rooms.delete(room);
 
@@ -825,6 +873,7 @@ function publicClient(client) {
     profile: client.profile,
     deviceType: normalizeDeviceType(client.deviceType),
     inCall: Boolean(client.inCall),
+    screenSharing: Boolean(client.screenSharing),
     isAdmin: Boolean(client.isAdmin)
   };
 }

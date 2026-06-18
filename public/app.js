@@ -39,6 +39,7 @@ const saveProfileButton = $("#saveProfileButton");
 const joinButton = $("#joinButton");
 const leaveButton = $("#leaveButton");
 const muteButton = $("#muteButton");
+const shareScreenButton = $("#shareScreenButton");
 const setupPanel = $("#setupPanel");
 const callControls = $("#callControls");
 const participants = $("#participants");
@@ -78,6 +79,7 @@ const kickStartButton = $("#kickStartButton");
 const kickCancelButton = $("#kickCancelButton");
 const kickVotes = $("#kickVotes");
 const audioMount = $("#audioMount");
+const toast = $("#toast");
 
 const AUTH_KEY = "callroom.auth.v3";
 const SITE_KEY = "callroom.site.v1";
@@ -110,6 +112,10 @@ const state = {
   meterTimer: null,
   callHealthTimer: null,
   micRecovering: false,
+  screenStream: null,
+  screenTrack: null,
+  screenSharing: false,
+  screenStarting: false,
   inCall: false,
   muted: false,
   hasMic: false,
@@ -192,6 +198,7 @@ saveProfileButton.addEventListener("click", saveProfile);
 joinButton.addEventListener("click", joinCall);
 leaveButton.addEventListener("click", () => leaveCall());
 muteButton.addEventListener("click", toggleMute);
+shareScreenButton.addEventListener("click", toggleScreenShare);
 participants.addEventListener("click", (event) => {
   const button = event.target.closest(".peer-mute");
   if (button) togglePeerMute(button.dataset.id);
@@ -538,6 +545,7 @@ function applyDevice(device) {
   pcLayoutButton.classList.toggle("plain", cleanDevice !== "pc");
   mobileLayoutButton.classList.toggle("blue", cleanDevice === "mobile");
   mobileLayoutButton.classList.toggle("plain", cleanDevice !== "mobile");
+  updateScreenShareButton();
 }
 
 async function showDevicePicker() {
@@ -1265,6 +1273,26 @@ async function handleSignal(message) {
     return;
   }
 
+  if (message.type === "screen-share-denied") {
+    await stopScreenShare(false);
+    showToast(message.message || "someone else is already sharing");
+    return;
+  }
+
+  if (message.type === "screen-share") {
+    const user = state.onlineUsers.get(message.from);
+    if (user) {
+      user.screenSharing = message.enabled === true;
+      state.onlineUsers.set(message.from, user);
+    }
+    setScreenShareCard(
+      message.from,
+      message.enabled === true,
+      message.from === state.id ? state.screenStream : state.peers.get(message.from)?.screenStream
+    );
+    return;
+  }
+
   if (message.type === "kick-vote") {
     const previousVote = state.kickVotes.get(message.vote.id);
     state.kickVotes.set(message.vote.id, message.vote);
@@ -1379,6 +1407,11 @@ async function handleSignal(message) {
     for (const peer of message.peers) {
       await createPeer(peer, true);
     }
+    if (state.screenSharing && state.screenTrack?.readyState === "live") {
+      send({ type: "screen-share", enabled: true });
+      setScreenShareCard(state.id, true, state.screenStream);
+    }
+    updateScreenShareButton();
     return;
   }
 
@@ -1536,7 +1569,8 @@ async function recoverPeerConnection(peer) {
     const info = {
       id: peer.id,
       profile: user.profile || peer.profile,
-      deviceType: user.deviceType || "pc"
+      deviceType: user.deviceType || "pc",
+      screenSharing: Boolean(user.screenSharing)
     };
     const volume = peer.volume;
     const remoteMuted = peer.remoteMuted;
@@ -1638,7 +1672,8 @@ async function ensurePeer(peerInfo) {
     id: peerInfo.id,
     profile: peerInfo.profile || profileFromName(peerInfo.name),
     deviceType: peerInfo.deviceType || "pc",
-    inCall: true
+    inCall: true,
+    screenSharing: Boolean(peerInfo.screenSharing)
   });
   if (state.peers.has(peerInfo.id)) return state.peers.get(peerInfo.id);
 
@@ -1649,6 +1684,9 @@ async function ensurePeer(peerInfo) {
     profile,
     connection,
     audio: null,
+    screenStream: null,
+    screenTransceiver: null,
+    screenSender: null,
     volume: 1,
     remoteMuted: false,
     sendingMuted: false,
@@ -1684,6 +1722,13 @@ async function ensurePeer(peerInfo) {
     connection.addTransceiver("audio", { direction: "recvonly" });
   }
 
+  peer.screenTransceiver = connection.addTransceiver("video", { direction: "sendrecv" });
+  peer.screenSender = peer.screenTransceiver.sender;
+  if (state.screenTrack?.readyState === "live") {
+    await peer.screenSender.replaceTrack(state.screenTrack);
+    await tuneScreenSender(peer.screenSender);
+  }
+
   connection.addEventListener("icecandidate", (event) => {
     if (event.candidate) {
       send({ type: "ice", to: peerInfo.id, candidate: event.candidate, deviceType: state.deviceType });
@@ -1691,6 +1736,17 @@ async function ensurePeer(peerInfo) {
   });
 
   connection.addEventListener("track", (event) => {
+    if (event.track.kind === "video") {
+      peer.screenStream = event.streams[0] || new MediaStream([event.track]);
+      const showScreen = state.onlineUsers.get(peerInfo.id)?.screenSharing === true;
+      setScreenShareCard(peerInfo.id, showScreen, peer.screenStream);
+      event.track.addEventListener("unmute", () => {
+        if (state.onlineUsers.get(peerInfo.id)?.screenSharing) {
+          setScreenShareCard(peerInfo.id, true, peer.screenStream);
+        }
+      });
+      return;
+    }
     if (!peer.audio) {
       peer.audio = document.createElement("audio");
       peer.audio.autoplay = true;
@@ -1750,6 +1806,9 @@ function renderParticipant(id, profile, local, inCall) {
     </div>
     <div class="tag"></div>
     <button class="small peer-mute" type="button">mute</button>
+    <div class="screen-share-view" hidden>
+      <video class="screen-share-video" autoplay playsinline></video>
+    </div>
   `;
   participants.append(card);
   state.cards.set(id, card);
@@ -1776,6 +1835,9 @@ function updateParticipant(id, profile, local, inCall) {
   card.classList.toggle("in-call", inCall);
   card.classList.toggle("no-mic", local && inCall && !state.hasMic);
   if (local && inCall && !state.hasMic) card.querySelector(".tag").textContent = "no mic";
+  const screenSharing = local ? state.screenSharing : Boolean(user?.screenSharing);
+  const screenStream = local ? state.screenStream : state.peers.get(id)?.screenStream;
+  setScreenShareCard(id, screenSharing, screenStream);
   updatePopups();
 }
 
@@ -1808,7 +1870,10 @@ function updateOnlineUser(user, updateCounter = true) {
   if (!user?.id) return;
   state.onlineUsers.set(user.id, user);
   const card = state.cards.get(user.id);
-  if (card) renderDeviceBadge(card.querySelector(".device-badge"), user.deviceType || "pc");
+  if (card) {
+    renderDeviceBadge(card.querySelector(".device-badge"), user.deviceType || "pc");
+    setScreenShareCard(user.id, Boolean(user.screenSharing), state.peers.get(user.id)?.screenStream);
+  }
   if (updateCounter) updateOnlineCounter();
   updateKickAvailability();
 }
@@ -1827,6 +1892,7 @@ function renderDeviceBadge(target, deviceType) {
 
 function updatePopups() {
   participants.hidden = !participants.children.length;
+  participants.classList.toggle("has-screen-share", Boolean(participants.querySelector(".person.screen-sharing")));
   kickVotes.hidden = !kickVotes.children.length;
 }
 
@@ -1862,6 +1928,7 @@ function removePeer(id, removeCard) {
     peer.boostGain?.disconnect();
     peer.connection.close();
     peer.audio?.remove();
+    peer.screenStream = null;
     state.peers.delete(id);
   }
 
@@ -1876,6 +1943,156 @@ function removePeer(id, removeCard) {
 function cleanupPeerConnections() {
   stopCallHealthMonitor();
   for (const id of [...state.peers.keys()]) removePeer(id, false);
+}
+
+function updateScreenShareButton() {
+  const pc = state.deviceType === "pc";
+  shareScreenButton.hidden = !pc;
+  shareScreenButton.disabled = !state.inCall || state.screenStarting;
+  shareScreenButton.textContent = state.screenSharing ? "stop sharing" : "share screen";
+  shareScreenButton.classList.toggle("blue", state.screenSharing);
+  shareScreenButton.classList.toggle("small", !state.screenSharing);
+  shareScreenButton.setAttribute("aria-pressed", String(state.screenSharing));
+}
+
+function activeScreenSharer() {
+  return [...state.onlineUsers.values()]
+    .find((user) => user.id !== state.id && user.inCall && user.screenSharing);
+}
+
+async function toggleScreenShare() {
+  if (state.screenSharing) {
+    await stopScreenShare(true);
+    return;
+  }
+  if (state.deviceType !== "pc") return;
+  if (!state.inCall) {
+    showToast("join the call before sharing");
+    return;
+  }
+  if (!navigator.mediaDevices?.getDisplayMedia) {
+    showToast("screen sharing is not supported in this browser");
+    return;
+  }
+  const activeSharer = activeScreenSharer();
+  if (activeSharer) {
+    showToast(`${activeSharer.profile?.name || activeSharer.username || "someone"} is already sharing`);
+    return;
+  }
+
+  state.screenStarting = true;
+  updateScreenShareButton();
+  let displayStream = null;
+  try {
+    displayStream = await navigator.mediaDevices.getDisplayMedia({
+      video: {
+        frameRate: { ideal: 12, max: 15 }
+      },
+      audio: false
+    });
+    const track = displayStream.getVideoTracks()[0];
+    if (!track) throw new Error("no screen was selected");
+    if (!state.inCall) {
+      displayStream.getTracks().forEach((item) => item.stop());
+      return;
+    }
+
+    track.contentHint = "detail";
+    await track.applyConstraints({
+      width: { max: 1280 },
+      height: { max: 720 },
+      frameRate: { max: 15 }
+    }).catch(() => {});
+
+    state.screenStream = displayStream;
+    state.screenTrack = track;
+    state.screenSharing = true;
+    track.addEventListener("ended", () => {
+      if (state.screenTrack === track) stopScreenShare(true);
+    }, { once: true });
+
+    await Promise.all([...state.peers.values()].map(async (peer) => {
+      if (!peer.screenSender) return;
+      await peer.screenSender.replaceTrack(track);
+      await tuneScreenSender(peer.screenSender);
+    }));
+
+    setScreenShareCard(state.id, true, displayStream);
+    send({ type: "screen-share", enabled: true });
+    showToast("screen sharing started");
+  } catch (error) {
+    displayStream?.getTracks().forEach((item) => item.stop());
+    if (error?.name !== "NotAllowedError") {
+      showToast(error?.message || "screen sharing failed");
+    }
+  } finally {
+    state.screenStarting = false;
+    updateScreenShareButton();
+  }
+}
+
+async function stopScreenShare(notifyServer = true) {
+  const wasSharing = state.screenSharing;
+  const stream = state.screenStream;
+  state.screenSharing = false;
+  state.screenStream = null;
+  state.screenTrack = null;
+
+  await Promise.all([...state.peers.values()].map(async (peer) => {
+    if (!peer.screenSender) return;
+    await peer.screenSender.replaceTrack(null).catch(() => {});
+  }));
+  stream?.getTracks().forEach((track) => track.stop());
+  setScreenShareCard(state.id, false);
+  if (wasSharing && notifyServer && state.inCall) {
+    send({ type: "screen-share", enabled: false });
+    showToast("screen sharing stopped");
+  }
+  updateScreenShareButton();
+}
+
+async function tuneScreenSender(sender) {
+  try {
+    const params = sender.getParameters();
+    if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+    params.encodings[0].maxBitrate = 1000000;
+    params.encodings[0].maxFramerate = 15;
+    params.degradationPreference = "maintain-resolution";
+    await sender.setParameters(params);
+  } catch {
+  }
+}
+
+function setScreenShareCard(id, enabled, stream = null) {
+  const card = state.cards.get(id);
+  if (!card) return;
+  const view = card.querySelector(".screen-share-view");
+  const video = card.querySelector(".screen-share-video");
+  if (!view || !video) return;
+
+  card.dataset.screenSharing = enabled ? "true" : "false";
+  card.classList.toggle("screen-sharing", enabled);
+  view.hidden = !enabled;
+  if (stream && video.srcObject !== stream) {
+    video.srcObject = stream;
+    video.muted = id === state.id;
+    video.play().catch(() => {});
+  }
+  if (!enabled) {
+    video.pause();
+    video.srcObject = null;
+    const local = card.dataset.local === "true";
+    if (card.dataset.muted === "true") {
+      card.querySelector(".tag").textContent = "muted";
+    } else if (local && !state.hasMic) {
+      card.querySelector(".tag").textContent = "no mic";
+    } else {
+      card.querySelector(".tag").textContent = local ? "you" : "live";
+    }
+  } else {
+    card.querySelector(".tag").textContent = "sharing screen";
+  }
+  updatePopups();
 }
 
 function toggleMute() {
@@ -2184,6 +2401,7 @@ function sendLeaveNow() {
 }
 
 function resetLocalCall(showMessage = true) {
+  stopScreenShare(false);
   state.stream?.getTracks().forEach((track) => track.stop());
   state.rawStream?.getTracks().forEach((track) => track.stop());
   state.stream = null;
@@ -2216,6 +2434,7 @@ function resetLocalCall(showMessage = true) {
   muteButton.setAttribute("aria-pressed", "false");
   muteButton.textContent = "mute";
   muteButton.disabled = false;
+  updateScreenShareButton();
   micStatus.textContent = "mic not joined";
   micStatus.className = "mic-status";
 
@@ -2336,6 +2555,8 @@ function setSpeaking(id, speaking) {
     card.querySelector(".tag").textContent = "talking";
   } else if (card.dataset.muted === "true") {
     card.querySelector(".tag").textContent = "muted";
+  } else if (card.dataset.screenSharing === "true") {
+    card.querySelector(".tag").textContent = "sharing screen";
   } else if (card.dataset.inCall === "true") {
     card.querySelector(".tag").textContent = card.dataset.local === "true" ? "you" : "live";
   } else {
@@ -2350,7 +2571,11 @@ function setMuted(id, muted) {
   if (peer) peer.sendingMuted = muted;
   card.dataset.muted = muted ? "true" : "false";
   card.classList.toggle("muted", muted);
-  card.querySelector(".tag").textContent = muted ? "muted" : id === state.id ? "you" : "live";
+  card.querySelector(".tag").textContent = muted
+    ? "muted"
+    : card.dataset.screenSharing === "true"
+      ? "sharing screen"
+      : id === state.id ? "you" : "live";
 }
 
 function sendChat(event) {
@@ -2935,7 +3160,13 @@ function isInsecureLanPhone() {
   return !window.isSecureContext && !["localhost", "127.0.0.1", "::1"].includes(location.hostname);
 }
 
-function showToast() {}
+let toastTimer;
+function showToast(message) {
+  clearTimeout(toastTimer);
+  toast.textContent = message;
+  toast.classList.add("show");
+  toastTimer = setTimeout(() => toast.classList.remove("show"), 2200);
+}
 
 function publicProfile() {
   return normalizeProfile(state.profile);

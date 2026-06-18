@@ -146,6 +146,7 @@
 
             <div class="controls" id="callControls" hidden>
               <button class="small" id="muteButton" type="button" aria-pressed="false">mute</button>
+              <button class="small" id="shareScreenButton" type="button" aria-pressed="false">share screen</button>
               <button class="red" id="leaveButton" type="button">leave</button>
             </div>
           </div>
@@ -173,6 +174,7 @@
       </div>
     </section>
 
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <div class="volume-backdrop" id="volumeBackdrop" hidden>
       <div class="volume-menu" id="volumeMenu" role="dialog" aria-modal="true">
         <div class="volume-head">
