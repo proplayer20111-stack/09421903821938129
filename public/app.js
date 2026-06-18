@@ -26,6 +26,9 @@ const themePanel = $("#themePanel");
 const themeMode = $("#themeMode");
 const themeAccent = $("#themeAccent");
 const adminPanel = $("#adminPanel");
+const chatEnabledToggle = $("#chatEnabledToggle");
+const clearChatButton = $("#clearChatButton");
+const adminChatCount = $("#adminChatCount");
 const accountList = $("#accountList");
 const securityList = $("#securityList");
 const profilePreview = $("#profilePreview");
@@ -41,8 +44,10 @@ const participants = $("#participants");
 const connectionState = $("#connectionState");
 const micStatus = $("#micStatus");
 const chatLog = $("#chatLog");
+const chatPanel = document.querySelector(".chat-panel");
 const chatForm = $("#chatForm");
 const chatInput = $("#chatInput");
+const chatSendButton = chatForm.querySelector('button[type="submit"]');
 const mediaButton = $("#mediaButton");
 const mediaFile = $("#mediaFile");
 const gifButton = $("#gifButton");
@@ -51,11 +56,18 @@ const gifSearch = $("#gifSearch");
 const gifSearchButton = $("#gifSearchButton");
 const gifGrid = $("#gifGrid");
 const gifNote = $("#gifNote");
+const volumeBackdrop = $("#volumeBackdrop");
 const volumeMenu = $("#volumeMenu");
+const volumeAvatar = $("#volumeAvatar");
 const volumeTitle = $("#volumeTitle");
+const volumeDevice = $("#volumeDevice");
+const volumeValue = $("#volumeValue");
 const volumeSlider = $("#volumeSlider");
 const volumeDown = $("#volumeDown");
 const volumeUp = $("#volumeUp");
+const volumeReset = $("#volumeReset");
+const volumeMute = $("#volumeMute");
+const volumeClose = $("#volumeClose");
 const voteKickButton = $("#voteKickButton");
 const kickStartPanel = $("#kickStartPanel");
 const kickTargetTitle = $("#kickTargetTitle");
@@ -95,6 +107,8 @@ const state = {
   audioDestination: null,
   meterFrame: null,
   meterTimer: null,
+  callHealthTimer: null,
+  micRecovering: false,
   inCall: false,
   muted: false,
   hasMic: false,
@@ -103,13 +117,16 @@ const state = {
   activeVolumePeerId: "",
   activeKickTargetId: "",
   longPressTimer: null,
+  longPressOrigin: null,
   mediaUploading: false,
+  chatEnabled: true,
   gifLoading: false,
   giphyApiKey: null,
   gifQuery: "reaction",
   gifOffset: 0,
   gifHasMore: true,
   notificationContext: null,
+  remoteAudioContext: null,
   notificationRegistration: null,
   notificationWanted: false,
   pushSubscribing: false,
@@ -164,8 +181,11 @@ adminButton.addEventListener("click", async () => {
   if (!adminPanel.hidden) {
     await loadAccounts();
     await loadSecurityEvents();
+    await loadChatSettings();
   }
 });
+chatEnabledToggle.addEventListener("change", updateChatSetting);
+clearChatButton.addEventListener("click", clearAllChatMessages);
 logoutButton.addEventListener("click", logout);
 saveProfileButton.addEventListener("click", saveProfile);
 joinButton.addEventListener("click", joinCall);
@@ -211,6 +231,12 @@ gifGrid.addEventListener("scroll", () => {
 volumeSlider.addEventListener("input", () => setPeerVolume(state.activeVolumePeerId, Number(volumeSlider.value) / 100));
 volumeDown.addEventListener("click", () => bumpPeerVolume(-0.1));
 volumeUp.addEventListener("click", () => bumpPeerVolume(0.1));
+volumeReset.addEventListener("click", () => setPeerVolume(state.activeVolumePeerId, 1));
+volumeMute.addEventListener("click", () => togglePeerMute(state.activeVolumePeerId));
+volumeClose.addEventListener("click", closeVolumeMenu);
+volumeBackdrop.addEventListener("click", (event) => {
+  if (event.target === volumeBackdrop) closeVolumeMenu();
+});
 voteKickButton.addEventListener("click", openKickStartPanel);
 kickStartButton.addEventListener("click", startKickVote);
 kickCancelButton.addEventListener("click", closeKickStartPanel);
@@ -219,7 +245,7 @@ kickVotes.addEventListener("click", (event) => {
   if (button) castKickVote(button.dataset.kickVoteId);
 });
 document.addEventListener("click", (event) => {
-  if (!volumeMenu.hidden && !volumeMenu.contains(event.target)) closeVolumeMenu();
+  if (!volumeBackdrop.hidden && !volumeMenu.contains(event.target) && event.target !== volumeBackdrop) closeVolumeMenu();
 });
 document.addEventListener("gesturestart", preventMobileZoom, { passive: false });
 document.addEventListener("gesturechange", preventMobileZoom, { passive: false });
@@ -261,6 +287,12 @@ window.addEventListener("pagehide", () => {
 window.addEventListener("pageshow", () => {
   state.manualDisconnect = false;
   if (state.token && (!state.ws || state.ws.readyState === WebSocket.CLOSED)) scheduleReconnect(0);
+});
+window.addEventListener("online", recoverAllPeerConnections);
+navigator.connection?.addEventListener?.("change", recoverAllPeerConnections);
+navigator.mediaDevices?.addEventListener?.("devicechange", () => {
+  const track = state.rawStream?.getAudioTracks()[0];
+  if (state.inCall && (!track || track.readyState === "ended")) recoverMicrophone();
 });
 
 boot();
@@ -599,7 +631,19 @@ function showCallScreen() {
   adminButton.hidden = !state.isAdmin;
   profileName.value = state.profile.name;
   renderAvatar(profilePreview, state.profile);
+  loadRtcConfig();
   if ("Notification" in window && Notification.permission === "granted") enablePushNotifications();
+}
+
+async function loadRtcConfig() {
+  try {
+    const response = await fetch("/api/rtc-config", { headers: siteHeaders() });
+    const result = await response.json();
+    if (response.ok && Array.isArray(result.iceServers) && result.iceServers.length) {
+      rtcConfig.iceServers = result.iceServers;
+    }
+  } catch {
+  }
 }
 
 function connectPresence() {
@@ -821,6 +865,72 @@ async function loadSecurityEvents() {
   renderSecurityEvents(result.events || []);
 }
 
+async function loadChatSettings() {
+  if (!state.isAdmin) return;
+  const response = await fetch("/api/chat-settings", { headers: authHeaders() });
+  const result = await response.json();
+  if (!response.ok) return;
+  applyChatState(result.enabled !== false);
+  updateAdminChatCount(result.storedMessages || 0);
+}
+
+async function updateChatSetting() {
+  const enabled = chatEnabledToggle.checked;
+  chatEnabledToggle.disabled = true;
+  try {
+    const response = await fetch("/api/chat-settings", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ enabled })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "chat update failed");
+    applyChatState(result.enabled !== false);
+    updateAdminChatCount(result.storedMessages || 0);
+  } catch {
+    chatEnabledToggle.checked = state.chatEnabled;
+  } finally {
+    chatEnabledToggle.disabled = false;
+  }
+}
+
+async function clearAllChatMessages() {
+  if (!state.isAdmin || clearChatButton.disabled) return;
+  clearChatButton.disabled = true;
+  clearChatButton.textContent = "deleting...";
+  try {
+    const response = await fetch("/api/chat-messages", {
+      method: "DELETE",
+      headers: authHeaders()
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "delete failed");
+    chatLog.textContent = "";
+    state.chatIds.clear();
+    updateAdminChatCount(0);
+  } catch {
+  } finally {
+    clearChatButton.disabled = false;
+    clearChatButton.textContent = "delete all messages";
+  }
+}
+
+function applyChatState(enabled) {
+  state.chatEnabled = Boolean(enabled);
+  chatEnabledToggle.checked = state.chatEnabled;
+  chatInput.disabled = !state.chatEnabled;
+  chatSendButton.disabled = !state.chatEnabled;
+  mediaButton.disabled = !state.chatEnabled;
+  gifButton.disabled = !state.chatEnabled;
+  chatInput.placeholder = state.chatEnabled ? "message or link" : "chat disabled by admin";
+  chatPanel.classList.toggle("chat-disabled", !state.chatEnabled);
+  if (!state.chatEnabled) gifPanel.hidden = true;
+}
+
+function updateAdminChatCount(count) {
+  adminChatCount.textContent = `${Number(count) || 0} stored messages`;
+}
+
 function renderSecurityEvents(events) {
   securityList.textContent = "";
   for (const event of events) addSecurityEvent(event, false);
@@ -925,6 +1035,7 @@ async function joinCall() {
   micStatus.textContent = "checking mic";
   micStatus.className = "mic-status";
 
+  await loadRtcConfig();
   if (!state.ws || state.ws.readyState === WebSocket.CLOSED) connectPresence();
   await waitForSocket();
   await requestMicrophone();
@@ -966,6 +1077,7 @@ async function requestMicrophone() {
     state.rawStream = await getMicrophoneStream();
     await tuneMicTrack(state.rawStream.getAudioTracks()[0]);
     state.stream = createProcessedMicStream(state.rawStream);
+    watchMicrophoneTrack();
 
     state.hasMic = true;
     micStatus.textContent = "mic on";
@@ -1021,6 +1133,69 @@ async function tuneMicTrack(track) {
   try {
     if (Object.keys(constraints).length) await track.applyConstraints(constraints);
   } catch {
+  }
+}
+
+function watchMicrophoneTrack() {
+  const track = state.rawStream?.getAudioTracks()[0];
+  if (!track) return;
+  let muteTimer = null;
+  track.addEventListener("ended", () => {
+    if (state.inCall) recoverMicrophone();
+  }, { once: true });
+  track.addEventListener("mute", () => {
+    clearTimeout(muteTimer);
+    muteTimer = setTimeout(() => {
+      if (state.inCall && track.muted && track.readyState === "live") recoverMicrophone();
+    }, 4000);
+  });
+  track.addEventListener("unmute", () => clearTimeout(muteTimer));
+}
+
+async function recoverMicrophone() {
+  if (!state.inCall || state.micRecovering || !navigator.mediaDevices?.getUserMedia) return;
+  state.micRecovering = true;
+  try {
+    const nextRawStream = await getMicrophoneStream();
+    const nextRawTrack = nextRawStream.getAudioTracks()[0];
+    await tuneMicTrack(nextRawTrack);
+
+    stopAudioMeter();
+    const oldAudioContext = state.audioContext;
+    state.audioContext = null;
+    state.analyser = null;
+    state.audioSource = null;
+    state.audioDestination = null;
+    await oldAudioContext?.close().catch(() => {});
+
+    const oldStream = state.stream;
+    const oldRawStream = state.rawStream;
+    state.rawStream = nextRawStream;
+    state.stream = createProcessedMicStream(nextRawStream);
+    const nextTrack = state.stream.getAudioTracks()[0];
+    nextTrack.enabled = !state.muted;
+
+    for (const peer of state.peers.values()) {
+      for (const sender of peer.connection.getSenders()) {
+        if (sender.track?.kind === "audio") {
+          await sender.replaceTrack(nextTrack);
+          await tuneAudioSender(sender);
+        }
+      }
+    }
+
+    oldStream?.getTracks().forEach((item) => item.stop());
+    oldRawStream?.getTracks().forEach((item) => item.stop());
+    state.hasMic = true;
+    watchMicrophoneTrack();
+    setupLocalAudioMeter();
+  } catch {
+    state.hasMic = false;
+    setTimeout(() => {
+      if (state.inCall) recoverMicrophone();
+    }, 5000);
+  } finally {
+    state.micRecovering = false;
   }
 }
 
@@ -1091,6 +1266,19 @@ async function handleSignal(message) {
     chatLog.textContent = "";
     state.chatIds.clear();
     for (const chat of message.messages || []) addChatBubble(chat);
+    updateAdminChatCount(message.messages?.length || 0);
+    return;
+  }
+
+  if (message.type === "chat-state") {
+    applyChatState(message.enabled !== false);
+    return;
+  }
+
+  if (message.type === "chat-cleared") {
+    chatLog.textContent = "";
+    state.chatIds.clear();
+    updateAdminChatCount(0);
     return;
   }
 
@@ -1148,6 +1336,7 @@ async function handleSignal(message) {
   if (message.type === "joined") {
     state.id = message.id;
     state.inCall = true;
+    startCallHealthMonitor();
     requestWakeLock();
     setupPanel.hidden = true;
     callControls.hidden = false;
@@ -1199,7 +1388,18 @@ async function handleSignal(message) {
       profile: message.profile || profileFromName(message.name),
       deviceType: message.deviceType
     });
-    await peer.connection.setRemoteDescription(message.offer);
+    const polite = String(state.id || "").localeCompare(message.from) > 0;
+    const offerCollision = peer.makingOffer || peer.connection.signalingState !== "stable";
+    peer.ignoreOffer = !polite && offerCollision;
+    if (peer.ignoreOffer) return;
+    if (offerCollision) {
+      await Promise.all([
+        peer.connection.setLocalDescription({ type: "rollback" }),
+        peer.connection.setRemoteDescription(message.offer)
+      ]);
+    } else {
+      await peer.connection.setRemoteDescription(message.offer);
+    }
     peer.remoteReady = true;
     await flushIce(peer);
     const answer = await peer.connection.createAnswer();
@@ -1211,7 +1411,7 @@ async function handleSignal(message) {
 
   if (message.type === "answer") {
     const peer = state.peers.get(message.from);
-    if (peer) {
+    if (peer && peer.connection.signalingState === "have-local-offer") {
       await peer.connection.setRemoteDescription(message.answer);
       peer.remoteReady = true;
       await flushIce(peer);
@@ -1221,7 +1421,7 @@ async function handleSignal(message) {
 
   if (message.type === "ice") {
     const peer = state.peers.get(message.from);
-    if (peer && message.candidate) {
+    if (peer && message.candidate && !peer.ignoreOffer) {
       if (peer.remoteReady) {
         await peer.connection.addIceCandidate(message.candidate);
       } else {
@@ -1244,23 +1444,34 @@ async function handleSignal(message) {
 async function createPeer(peerInfo, initiator) {
   const peer = await ensurePeer(peerInfo);
 
-  if (!initiator) return;
+  if (!initiator) return peer;
 
-  const offer = await peer.connection.createOffer();
-  offer.sdp = improveAudioSdp(offer.sdp);
-  await peer.connection.setLocalDescription(offer);
-  send({
-    type: "offer",
-    to: peerInfo.id,
-    offer,
-    profile: publicProfile(),
-    deviceType: state.deviceType
-  });
+  peer.makingOffer = true;
+  try {
+    const offer = await peer.connection.createOffer();
+    offer.sdp = improveAudioSdp(offer.sdp);
+    await peer.connection.setLocalDescription(offer);
+    send({
+      type: "offer",
+      to: peerInfo.id,
+      offer,
+      profile: publicProfile(),
+      deviceType: state.deviceType
+    });
+  } finally {
+    peer.makingOffer = false;
+  }
+  return peer;
 }
 
 async function restartPeerIce(peer) {
-  if (!peer || peer.connection.connectionState === "closed") return;
+  if (!peer || peer.connection.connectionState === "closed" || peer.restartInFlight) return;
+  if (Date.now() - peer.lastRestartAt < 8000) return;
+  peer.restartInFlight = true;
+  peer.lastRestartAt = Date.now();
+  peer.makingOffer = true;
   try {
+    if (peer.connection.signalingState !== "stable") return;
     peer.connection.restartIce?.();
     const offer = await peer.connection.createOffer({ iceRestart: true });
     offer.sdp = improveAudioSdp(offer.sdp);
@@ -1273,6 +1484,120 @@ async function restartPeerIce(peer) {
       deviceType: state.deviceType
     });
   } catch {
+  } finally {
+    peer.makingOffer = false;
+    peer.restartInFlight = false;
+  }
+}
+
+async function recoverPeerConnection(peer) {
+  if (!state.inCall || !peer || state.peers.get(peer.id) !== peer || peer.recovering) return;
+  peer.recovering = true;
+  try {
+    peer.recoveryAttempts += 1;
+    if (peer.recoveryAttempts <= 2) {
+      await restartPeerIce(peer);
+      return;
+    }
+
+    const user = state.onlineUsers.get(peer.id) || {};
+    const info = {
+      id: peer.id,
+      profile: user.profile || peer.profile,
+      deviceType: user.deviceType || "pc"
+    };
+    const volume = peer.volume;
+    const remoteMuted = peer.remoteMuted;
+    removePeer(peer.id, false);
+    const rebuilt = await createPeer(info, String(state.id || "").localeCompare(peer.id) < 0);
+    if (rebuilt) {
+      rebuilt.volume = volume;
+      rebuilt.remoteMuted = remoteMuted;
+    }
+  } catch {
+  } finally {
+    peer.recovering = false;
+  }
+}
+
+function recoverAllPeerConnections() {
+  if (!state.inCall) return;
+  for (const peer of state.peers.values()) recoverPeerConnection(peer);
+}
+
+function startCallHealthMonitor() {
+  stopCallHealthMonitor();
+  state.callHealthTimer = setInterval(() => {
+    for (const peer of state.peers.values()) checkPeerHealth(peer);
+  }, state.deviceType === "mobile" ? 8000 : 6000);
+}
+
+function stopCallHealthMonitor() {
+  clearInterval(state.callHealthTimer);
+  state.callHealthTimer = null;
+}
+
+async function checkPeerHealth(peer) {
+  if (!state.inCall || !peer || peer.connection.connectionState === "closed") return;
+  try {
+    const stats = await peer.connection.getStats();
+    let inbound = null;
+    let remoteInbound = null;
+    stats.forEach((report) => {
+      if (report.type === "inbound-rtp" && report.kind === "audio" && !report.isRemote) inbound = report;
+      if (report.type === "remote-inbound-rtp" && report.kind === "audio") remoteInbound = report;
+    });
+    if (!inbound) return;
+    if (peer.lastInboundPackets === null) {
+      peer.lastInboundPackets = Number(inbound.packetsReceived || 0);
+      peer.lastInboundLost = Number(inbound.packetsLost || 0);
+      peer.lastInboundBytes = Number(inbound.bytesReceived || 0);
+      peer.lastConcealedSamples = Number(inbound.concealedSamples || 0);
+      peer.lastTotalSamples = Number(inbound.totalSamplesReceived || 0);
+      await setPeerAudioBitrate(peer, false);
+      return;
+    }
+
+    const packetDelta = Math.max(0, Number(inbound.packetsReceived || 0) - peer.lastInboundPackets);
+    const lostDelta = Math.max(0, Number(inbound.packetsLost || 0) - peer.lastInboundLost);
+    const byteDelta = Math.max(0, Number(inbound.bytesReceived || 0) - peer.lastInboundBytes);
+    const concealedDelta = Math.max(0, Number(inbound.concealedSamples || 0) - peer.lastConcealedSamples);
+    const sampleDelta = Math.max(0, Number(inbound.totalSamplesReceived || 0) - peer.lastTotalSamples);
+    const lossRatio = lostDelta / Math.max(1, packetDelta + lostDelta);
+    const concealRatio = concealedDelta / Math.max(1, sampleDelta);
+    const jitter = Number(inbound.jitter || 0);
+    const remoteLossRaw = Number(remoteInbound?.fractionLost || 0);
+    const remoteLoss = remoteLossRaw > 1 ? remoteLossRaw / 255 : remoteLossRaw;
+    const bad = lossRatio > 0.12 || remoteLoss > 0.12 || jitter > 0.15 || concealRatio > 0.25;
+
+    if (peer.lastInboundPackets !== null && packetDelta === 0 && byteDelta === 0 && !peer.remoteMuted && !peer.sendingMuted) {
+      peer.stalledSamples += 1;
+    } else {
+      peer.stalledSamples = 0;
+    }
+    peer.healthBadSamples = bad ? peer.healthBadSamples + 1 : Math.max(0, peer.healthBadSamples - 1);
+    peer.lastInboundPackets = Number(inbound.packetsReceived || 0);
+    peer.lastInboundLost = Number(inbound.packetsLost || 0);
+    peer.lastInboundBytes = Number(inbound.bytesReceived || 0);
+    peer.lastConcealedSamples = Number(inbound.concealedSamples || 0);
+    peer.lastTotalSamples = Number(inbound.totalSamplesReceived || 0);
+
+    await setPeerAudioBitrate(peer, bad);
+    if (peer.healthBadSamples >= 3 || peer.stalledSamples >= 4) {
+      peer.healthBadSamples = 0;
+      peer.stalledSamples = 0;
+      recoverPeerConnection(peer);
+    }
+  } catch {
+  }
+}
+
+async function setPeerAudioBitrate(peer, degraded) {
+  const bitrate = degraded ? 48000 : state.deviceType === "mobile" ? 64000 : 96000;
+  if (peer.currentBitrate === bitrate) return;
+  peer.currentBitrate = bitrate;
+  for (const sender of peer.connection.getSenders()) {
+    if (sender.track?.kind === "audio") await tuneAudioSender(sender, bitrate);
   }
 }
 
@@ -1294,9 +1619,26 @@ async function ensurePeer(peerInfo) {
     audio: null,
     volume: 1,
     remoteMuted: false,
+    sendingMuted: false,
     pendingIce: [],
     remoteReady: false,
-    reconnectTimer: null
+    reconnectTimer: null,
+    boostSource: null,
+    boostGain: null,
+    healthBadSamples: 0,
+    stalledSamples: 0,
+    recoveryAttempts: 0,
+    restartInFlight: false,
+    recovering: false,
+    makingOffer: false,
+    ignoreOffer: false,
+    lastRestartAt: 0,
+    lastInboundPackets: null,
+    lastInboundLost: null,
+    lastInboundBytes: null,
+    lastConcealedSamples: null,
+    lastTotalSamples: null,
+    currentBitrate: null
   };
   state.peers.set(peerInfo.id, peer);
   renderParticipant(peerInfo.id, profile, false, true);
@@ -1326,6 +1668,8 @@ async function ensurePeer(peerInfo) {
       audioMount.append(peer.audio);
     }
     peer.audio.srcObject = event.streams[0];
+    peer.audio.play().catch(() => {});
+    applyPeerOutput(peer);
   });
 
   connection.addEventListener("connectionstatechange", () => {
@@ -1334,15 +1678,22 @@ async function ensurePeer(peerInfo) {
     if (connection.connectionState === "connected") {
       clearTimeout(peer.reconnectTimer);
       peer.reconnectTimer = null;
+      peer.recoveryAttempts = 0;
+      peer.healthBadSamples = 0;
+      peer.stalledSamples = 0;
+      peer.audio?.play().catch(() => {});
     }
     if (connection.connectionState === "disconnected") {
       clearTimeout(peer.reconnectTimer);
-      peer.reconnectTimer = setTimeout(() => restartPeerIce(peer), 1800);
+      peer.reconnectTimer = setTimeout(() => recoverPeerConnection(peer), 2500);
     }
-    if (["failed", "closed"].includes(connection.connectionState)) {
+    if (connection.connectionState === "failed") {
       clearTimeout(peer.reconnectTimer);
-      removePeer(peerInfo.id, false);
+      recoverPeerConnection(peer);
     }
+  });
+  connection.addEventListener("iceconnectionstatechange", () => {
+    if (connection.iceConnectionState === "failed") recoverPeerConnection(peer);
   });
 
   return peer;
@@ -1475,6 +1826,8 @@ function removePeer(id, removeCard) {
   const peer = state.peers.get(id);
   if (peer) {
     clearTimeout(peer.reconnectTimer);
+    peer.boostSource?.disconnect();
+    peer.boostGain?.disconnect();
     peer.connection.close();
     peer.audio?.remove();
     state.peers.delete(id);
@@ -1489,6 +1842,7 @@ function removePeer(id, removeCard) {
 }
 
 function cleanupPeerConnections() {
+  stopCallHealthMonitor();
   for (const id of [...state.peers.keys()]) removePeer(id, false);
 }
 
@@ -1515,10 +1869,11 @@ function togglePeerMute(id) {
   if (!peer || !card) return;
 
   peer.remoteMuted = !peer.remoteMuted;
-  if (peer.audio) peer.audio.muted = peer.remoteMuted;
+  applyPeerOutput(peer);
   card.classList.toggle("remote-muted", peer.remoteMuted);
   const button = card.querySelector(".peer-mute");
   if (button) button.textContent = peer.remoteMuted ? "unmute" : "mute";
+  if (state.activeVolumePeerId === id) volumeMute.textContent = peer.remoteMuted ? "unmute" : "mute";
 }
 
 function startParticipantHold(event) {
@@ -1526,14 +1881,22 @@ function startParticipantHold(event) {
   if (!card || card.dataset.local === "true") return;
   const touch = event.touches[0];
   cancelParticipantHold();
+  state.longPressOrigin = { x: touch.clientX, y: touch.clientY };
   state.longPressTimer = setTimeout(() => {
+    navigator.vibrate?.(18);
     openVolumeMenu(card.dataset.id, touch.clientX, touch.clientY);
   }, 520);
 }
 
-function cancelParticipantHold() {
+function cancelParticipantHold(event) {
+  if (event?.type === "touchmove" && state.longPressOrigin && event.touches[0]) {
+    const touch = event.touches[0];
+    const distance = Math.hypot(touch.clientX - state.longPressOrigin.x, touch.clientY - state.longPressOrigin.y);
+    if (distance < 12) return;
+  }
   clearTimeout(state.longPressTimer);
   state.longPressTimer = null;
+  state.longPressOrigin = null;
 }
 
 function openVolumeMenu(id, x, y) {
@@ -1542,19 +1905,26 @@ function openVolumeMenu(id, x, y) {
   if (!peer || !card) return;
 
   state.activeVolumePeerId = id;
-  volumeTitle.textContent = `${card.querySelector(".name").textContent.replace(" (you)", "")} volume`;
+  const user = state.onlineUsers.get(id);
+  volumeTitle.textContent = card.querySelector(".name").textContent.replace(" (you)", "");
+  volumeDevice.textContent = user?.deviceType === "mobile" ? "Phone caller" : "PC caller";
+  renderAvatar(volumeAvatar, user?.profile || peer.profile);
   volumeSlider.value = String(Math.round((peer.volume ?? 1) * 100));
+  volumeValue.textContent = `${volumeSlider.value}%`;
+  volumeMute.textContent = peer.remoteMuted ? "unmute" : "mute";
   updateKickAvailability();
-  volumeMenu.hidden = false;
+  volumeBackdrop.hidden = false;
+  document.body.classList.add("volume-open");
 
-  const menuWidth = 230;
-  const menuHeight = 96;
-  volumeMenu.style.left = `${Math.min(x, window.innerWidth - menuWidth - 8)}px`;
-  volumeMenu.style.top = `${Math.min(y, window.innerHeight - menuHeight - 8)}px`;
+  const menuWidth = 310;
+  const menuHeight = 250;
+  volumeMenu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - menuWidth - 8))}px`;
+  volumeMenu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - menuHeight - 8))}px`;
 }
 
 function closeVolumeMenu() {
-  volumeMenu.hidden = true;
+  volumeBackdrop.hidden = true;
+  document.body.classList.remove("volume-open");
   state.activeVolumePeerId = "";
 }
 
@@ -1570,10 +1940,39 @@ function setPeerVolume(id, volume) {
   const peer = state.peers.get(id);
   if (!peer) return;
   peer.volume = Math.max(0, Math.min(2, volume));
+  volumeSlider.value = String(Math.round(peer.volume * 100));
+  volumeValue.textContent = `${volumeSlider.value}%`;
   if (peer.audio) {
-    peer.audio.volume = peer.volume;
-    peer.audio.muted = peer.remoteMuted || peer.volume === 0;
+    applyPeerOutput(peer);
   }
+}
+
+function applyPeerOutput(peer) {
+  if (!peer?.audio) return;
+  if (peer.volume > 1 && peer.audio.srcObject) {
+    try {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) throw new Error("audio boost unavailable");
+      state.remoteAudioContext ||= new AudioContextClass();
+      if (state.remoteAudioContext.state === "suspended") state.remoteAudioContext.resume().catch(() => {});
+      if (!peer.boostGain) {
+        peer.boostSource = state.remoteAudioContext.createMediaStreamSource(peer.audio.srcObject);
+        peer.boostGain = state.remoteAudioContext.createGain();
+        peer.boostSource.connect(peer.boostGain).connect(state.remoteAudioContext.destination);
+      }
+      peer.boostGain.gain.value = peer.remoteMuted ? 0 : peer.volume;
+      peer.audio.muted = true;
+      return;
+    } catch {
+    }
+  }
+
+  peer.boostSource?.disconnect();
+  peer.boostGain?.disconnect();
+  peer.boostSource = null;
+  peer.boostGain = null;
+  peer.audio.volume = Math.min(1, peer.volume);
+  peer.audio.muted = peer.remoteMuted || peer.volume === 0;
 }
 
 function openKickStartPanel() {
@@ -1760,7 +2159,9 @@ function resetLocalCall(showMessage = true) {
   state.hasMic = false;
 
   if (state.audioContext?.state !== "closed") state.audioContext?.close();
+  if (state.remoteAudioContext?.state !== "closed") state.remoteAudioContext?.close();
   state.audioContext = null;
+  state.remoteAudioContext = null;
   state.audioSource = null;
   state.audioDestination = null;
   state.analyser = null;
@@ -1913,6 +2314,8 @@ function setSpeaking(id, speaking) {
 function setMuted(id, muted) {
   const card = state.cards.get(id);
   if (!card) return;
+  const peer = state.peers.get(id);
+  if (peer) peer.sendingMuted = muted;
   card.dataset.muted = muted ? "true" : "false";
   card.classList.toggle("muted", muted);
   card.querySelector(".tag").textContent = muted ? "muted" : id === state.id ? "you" : "live";
@@ -1920,6 +2323,7 @@ function setMuted(id, muted) {
 
 function sendChat(event) {
   event.preventDefault();
+  if (!state.chatEnabled) return;
   const text = chatInput.value.trim();
   if (!text) return;
 
@@ -1928,6 +2332,7 @@ function sendChat(event) {
 }
 
 async function uploadChatMedia() {
+  if (!state.chatEnabled) return;
   const file = mediaFile.files[0];
   mediaFile.value = "";
   if (!file || state.mediaUploading) return;
@@ -1961,12 +2366,13 @@ async function uploadChatMedia() {
     showToast(error.message || "upload failed");
   } finally {
     state.mediaUploading = false;
-    mediaButton.disabled = false;
+    mediaButton.disabled = !state.chatEnabled;
     mediaButton.textContent = "+";
   }
 }
 
 function toggleGifPanel() {
+  if (!state.chatEnabled) return;
   gifPanel.hidden = !gifPanel.hidden;
   if (!gifPanel.hidden) {
     if (!gifGrid.children.length) renderGifEmpty("loading GIF setup...");
@@ -2013,7 +2419,7 @@ async function searchGifs(append = false) {
     else renderGifEmpty(error.message || "GIF search needs an API key.");
   } finally {
     state.gifLoading = false;
-    gifSearchButton.disabled = false;
+    gifSearchButton.disabled = !state.chatEnabled;
     gifSearchButton.textContent = "search";
   }
 }
@@ -2097,6 +2503,7 @@ function renderGifEmpty(note = "") {
 }
 
 async function sendGifItem(item) {
+  if (!state.chatEnabled) return;
   if (state.mediaUploading) return;
   if (!item.dataset.gifUrl) return;
   const body = {
@@ -2137,9 +2544,10 @@ function addChatBubble(message) {
   if (age > ttl) return;
   if (message.id) state.chatIds.add(message.id);
 
-  const mine = message.from === state.id;
+  const mine = message.from === state.id || Boolean(message.username && message.username === state.username);
   const followBottom = mine || isChatNearBottom();
   const row = document.createElement("div");
+  row.dataset.messageId = message.id || "";
   const richMessage = ["media", "gif"].includes(message.kind);
   row.className = `chat-entry${mine ? " mine" : ""}${richMessage ? " media-entry" : ""}`;
 
@@ -2162,6 +2570,7 @@ function addChatBubble(message) {
   }
   row.append(avatar, bubble);
   chatLog.append(row);
+  trimChatDisplay();
   if (followBottom) {
     scrollChatToBottom();
     const media = row.querySelector(".chat-media");
@@ -2170,6 +2579,16 @@ function addChatBubble(message) {
       media.addEventListener(eventName, scrollChatToBottom, { once: true });
     }
   }
+}
+
+function trimChatDisplay() {
+  while (chatLog.children.length > 25) {
+    const oldest = chatLog.firstElementChild;
+    const id = oldest?.dataset.messageId;
+    if (id) state.chatIds.delete(id);
+    oldest?.remove();
+  }
+  updateAdminChatCount(chatLog.children.length);
 }
 
 function isChatNearBottom() {
@@ -2254,17 +2673,17 @@ function improveAudioSdp(sdp) {
         nextParams.set(key, value);
       }
       nextParams.set("useinbandfec", "1");
-      nextParams.set("usedtx", "0");
-      nextParams.set("maxaveragebitrate", "128000");
+      nextParams.set("usedtx", "1");
+      nextParams.set("maxaveragebitrate", state.deviceType === "mobile" ? "64000" : "96000");
       nextParams.set("stereo", "0");
       nextParams.set("sprop-stereo", "0");
-      nextParams.set("cbr", "1");
+      nextParams.delete("cbr");
       return `a=fmtp:${opusPayload} ${[...nextParams].map(([key, value]) => `${key}=${value}`).join(";")}`;
     });
   } else {
     sdp = sdp.replace(
       new RegExp(`a=rtpmap:${opusPayload} opus/48000/2\\r?\\n`, "i"),
-      (line) => `${line}a=fmtp:${opusPayload} useinbandfec=1;usedtx=0;maxaveragebitrate=128000;stereo=0;sprop-stereo=0;cbr=1\r\n`
+      (line) => `${line}a=fmtp:${opusPayload} useinbandfec=1;usedtx=1;maxaveragebitrate=${state.deviceType === "mobile" ? "64000" : "96000"};stereo=0;sprop-stereo=0\r\n`
     );
   }
 
@@ -2278,11 +2697,11 @@ function improveAudioSdp(sdp) {
   return sdp;
 }
 
-async function tuneAudioSender(sender) {
+async function tuneAudioSender(sender, maxBitrate = state.deviceType === "mobile" ? 64000 : 96000) {
   try {
     const params = sender.getParameters();
     if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
-    params.encodings[0].maxBitrate = 128000;
+    params.encodings[0].maxBitrate = maxBitrate;
     params.encodings[0].priority = "high";
     params.encodings[0].networkPriority = "high";
     await sender.setParameters(params);

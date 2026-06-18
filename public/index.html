@@ -128,6 +128,15 @@
             <div class="kick-votes" id="kickVotes" hidden></div>
 
             <div class="admin-panel" id="adminPanel" hidden>
+              <h2>Chat controls</h2>
+              <div class="admin-chat-controls">
+                <label class="toggle-row">
+                  <input id="chatEnabledToggle" type="checkbox" checked>
+                  <span>Allow chat</span>
+                </label>
+                <button class="red" id="clearChatButton" type="button">delete all messages</button>
+                <div class="admin-chat-count" id="adminChatCount">0 stored messages</div>
+              </div>
               <h2>Accounts</h2>
               <div id="accountList"></div>
               <h2>Security alerts</h2>
@@ -163,14 +172,31 @@
       </div>
     </section>
 
-    <div class="volume-menu" id="volumeMenu" hidden>
-      <div class="volume-title" id="volumeTitle">volume</div>
-      <div class="volume-controls">
-        <button class="small" id="volumeDown" type="button">-</button>
-        <input id="volumeSlider" type="range" min="0" max="200" value="100">
-        <button class="small" id="volumeUp" type="button">+</button>
+    <div class="volume-backdrop" id="volumeBackdrop" hidden>
+      <div class="volume-menu" id="volumeMenu" role="dialog" aria-modal="true">
+        <div class="volume-head">
+          <div class="avatar volume-avatar" id="volumeAvatar"></div>
+          <div class="volume-person">
+            <div class="volume-title" id="volumeTitle">Caller</div>
+            <div class="volume-device" id="volumeDevice">call controls</div>
+          </div>
+          <button class="small volume-close" id="volumeClose" type="button" title="close">x</button>
+        </div>
+        <div class="volume-label">
+          <span>Volume</span>
+          <strong id="volumeValue">100%</strong>
+        </div>
+        <div class="volume-controls">
+          <button class="small" id="volumeDown" type="button" title="volume down">-</button>
+          <input id="volumeSlider" type="range" min="0" max="200" value="100" aria-label="caller volume">
+          <button class="small" id="volumeUp" type="button" title="volume up">+</button>
+        </div>
+        <div class="volume-actions">
+          <button class="plain" id="volumeReset" type="button">reset</button>
+          <button class="plain" id="volumeMute" type="button">mute</button>
+        </div>
+        <button class="red vote-kick-menu" id="voteKickButton" type="button">vote kick</button>
       </div>
-      <button class="red vote-kick-menu" id="voteKickButton" type="button">vote kick</button>
     </div>
     <div id="audioMount" hidden></div>
 

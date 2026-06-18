@@ -1,5 +1,7 @@
 accounts.json
 device-rules.json
+chat-messages.json
+chat-settings.json
 *.log
 .env
 node_modules/

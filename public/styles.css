@@ -497,6 +497,40 @@ select:focus {
   color: var(--accent);
 }
 
+.admin-chat-controls {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+
+.toggle-row input {
+  width: 20px;
+  min-height: 20px;
+  accent-color: var(--accent-fill);
+}
+
+.admin-chat-count {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chat-panel.chat-disabled {
+  opacity: 0.72;
+}
+
+.chat-panel.chat-disabled .chat-log {
+  opacity: 0.78;
+}
+
 .account-row {
   display: flex;
   align-items: center;
@@ -814,24 +848,72 @@ select:focus {
   justify-content: center;
 }
 
+.volume-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 19;
+}
+
 .volume-menu {
   position: fixed;
   z-index: 20;
-  width: 230px;
+  width: 310px;
   color: var(--text);
-  padding: 12px;
-  border-radius: var(--radius-sm);
+  padding: 16px;
+  border-radius: 22px;
   animation: menu-in 120ms ease-out;
 }
 
+.volume-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.volume-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+}
+
+.volume-person {
+  min-width: 0;
+  flex: 1;
+}
+
 .volume-title {
-  margin-bottom: 8px;
-  color: var(--accent);
-  font-size: 13px;
+  color: var(--text);
+  font-size: 15px;
   font-weight: bold;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.volume-device {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.volume-close {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.volume-label {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.volume-label strong {
+  color: var(--accent);
 }
 
 .volume-controls {
@@ -843,11 +925,19 @@ select:focus {
 .volume-controls input {
   flex: 1;
   min-width: 0;
+  accent-color: var(--accent-fill);
+}
+
+.volume-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .vote-kick-menu {
   width: 100%;
-  margin-top: 10px;
+  margin-top: 12px;
 }
 
 @keyframes bubble-in {
@@ -1189,6 +1279,16 @@ select:focus {
     left: max(8px, env(safe-area-inset-left)) !important;
     top: auto !important;
     width: auto;
+    border-radius: 24px;
+    padding: 16px;
+  }
+
+  .volume-backdrop {
+    background: rgba(0, 0, 0, 0.34);
+  }
+
+  body.volume-open {
+    overflow: hidden;
   }
 
   .gif-grid {

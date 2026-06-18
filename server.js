@@ -23,6 +23,8 @@ const DATA_DIR = process.env.DATA_DIR || __dirname;
 fs.mkdirSync(DATA_DIR, { recursive: true });
 const ACCOUNTS_PATH = path.join(DATA_DIR, "accounts.json");
 const DEVICE_RULES_PATH = path.join(DATA_DIR, "device-rules.json");
+const CHAT_PATH = path.join(DATA_DIR, "chat-messages.json");
+const CHAT_SETTINGS_PATH = path.join(DATA_DIR, "chat-settings.json");
 const rooms = new Map();
 const sessions = new Map();
 const siteSessions = new Map();
@@ -30,7 +32,8 @@ const accessAttempts = new Map();
 const blockedIps = new Set();
 const protectedIps = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
 const securityEvents = [];
-const chatMessages = [];
+const chatMessages = loadChatMessages();
+let chatEnabled = loadChatSettings().enabled;
 const mediaCooldowns = new Map();
 const deviceRules = loadDeviceRules();
 const deviceTimeouts = new Map(deviceRules.deviceTimeouts || []);
@@ -46,6 +49,7 @@ let databasePool = null;
 let databaseSaveChain = Promise.resolve();
 const databaseSaveTimers = new Map();
 const databasePendingValues = new Map();
+let chatSaveTimer = null;
 let activeUploads = 0;
 
 const SITE_PASSWORD = process.env.SITE_PASSWORD || "Seth123";
@@ -58,8 +62,9 @@ const DEVICE_TIMEOUT_MS = 3 * 60 * 1000;
 const KICK_MAX_MS = 3 * 60 * 1000;
 const KICK_VOTE_TTL_MS = 45 * 1000;
 const VOTE_KICK_COOLDOWN_MS = 3 * 60 * 1000;
-const MAX_CHAT_MESSAGES = 500;
-const MAX_CHAT_BYTES = 4 * 1024 * 1024;
+const MAX_CHAT_MESSAGES = 25;
+const CHAT_HISTORY_MESSAGES = 15;
+const MAX_CHAT_BYTES = 512 * 1024;
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 const MAX_CONCURRENT_UPLOADS = 2;
 const MAX_SOCKET_BUFFER_BYTES = 1024 * 1024;
@@ -70,6 +75,9 @@ const PUSH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MEMORY_SOFT_RSS_BYTES = 350 * 1024 * 1024;
 const MEMORY_HARD_RSS_BYTES = 425 * 1024 * 1024;
 const GIPHY_API_KEY = process.env.GIPHY_API_KEY || "";
+const TURN_URL = String(process.env.TURN_URL || "").trim();
+const TURN_USERNAME = String(process.env.TURN_USERNAME || "").trim();
+const TURN_CREDENTIAL = String(process.env.TURN_CREDENTIAL || "").trim();
 const VAPID_KEYS = getVapidKeys();
 if (webPush && VAPID_KEYS.publicKey && VAPID_KEYS.privateKey) {
   webPush.setVapidDetails(process.env.WEB_PUSH_CONTACT || "mailto:admin@example.com", VAPID_KEYS.publicKey, VAPID_KEYS.privateKey);
@@ -154,6 +162,25 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/chat-settings") {
+    if (!requireSiteAccess(req, res)) return;
+    if (!requireAdmin(req, res)) return;
+    sendJson(res, 200, { enabled: chatEnabled, storedMessages: chatMessages.length });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/chat-settings") {
+    if (!requireSiteAccess(req, res)) return;
+    await handleChatSettings(req, res);
+    return;
+  }
+
+  if (req.method === "DELETE" && url.pathname === "/api/chat-messages") {
+    if (!requireSiteAccess(req, res)) return;
+    await handleClearChat(req, res);
+    return;
+  }
+
   if (req.method === "POST" && url.pathname.startsWith("/api/security-events/")) {
     if (!requireSiteAccess(req, res)) return;
     handleSecurityAction(req, res, url);
@@ -179,6 +206,20 @@ const server = http.createServer(async (req, res) => {
       enabled: Boolean(GIPHY_API_KEY),
       giphyApiKey: GIPHY_API_KEY
     });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/rtc-config") {
+    if (!requireSiteAccess(req, res)) return;
+    const iceServers = [{ urls: "stun:stun.l.google.com:19302" }];
+    if (TURN_URL && TURN_USERNAME && TURN_CREDENTIAL) {
+      iceServers.push({
+        urls: TURN_URL,
+        username: TURN_USERNAME,
+        credential: TURN_CREDENTIAL
+      });
+    }
+    sendJson(res, 200, { iceServers, hasTurn: iceServers.length > 1 });
     return;
   }
 
@@ -409,8 +450,9 @@ function handleMessage(client, message) {
     pruneChatMessages();
     send(client, {
       type: "chat-history",
-      messages: chatMessages
+      messages: chatMessages.slice(-CHAT_HISTORY_MESSAGES)
     });
+    send(client, { type: "chat-state", enabled: chatEnabled });
     broadcastPresence({ type: "presence-update", user: publicClient(client) }, client.id);
     broadcastPresenceSync();
     return;
@@ -475,6 +517,10 @@ function handleMessage(client, message) {
 
   if (message.type === "chat") {
     if (!client.account) return;
+    if (!chatEnabled) {
+      send(client, { type: "error", message: "chat is disabled" });
+      return;
+    }
     pruneChatMessages();
     const text = sanitizeChat(message.text);
     if (!text) return;
@@ -482,6 +528,7 @@ function handleMessage(client, message) {
       type: "chat",
       id: crypto.randomUUID(),
       from: client.id,
+      username: client.account,
       name: client.name,
       profile: client.profile,
       text,
@@ -871,6 +918,10 @@ async function handleProfileUpload(req, res) {
 async function handleMediaUpload(req, res, url) {
   const auth = requireAccount(req, res);
   if (!auth) return;
+  if (!chatEnabled) {
+    sendJson(res, 403, { error: "chat is disabled" });
+    return;
+  }
 
   const now = Date.now();
   const lastUpload = mediaCooldowns.get(auth.username) || 0;
@@ -919,6 +970,10 @@ async function handleMediaUpload(req, res, url) {
 async function handleGifSend(req, res, url) {
   const auth = requireAccount(req, res);
   if (!auth) return;
+  if (!chatEnabled) {
+    sendJson(res, 403, { error: "chat is disabled" });
+    return;
+  }
 
   const now = Date.now();
   const lastUpload = mediaCooldowns.get(auth.username) || 0;
@@ -1198,6 +1253,36 @@ function handleSecurityAction(req, res, url) {
   }
 
   sendJson(res, 404, { error: "unknown action" });
+}
+
+async function handleChatSettings(req, res) {
+  const admin = requireAdmin(req, res);
+  if (!admin) return;
+  try {
+    const body = await readJson(req);
+    chatEnabled = body.enabled !== false;
+    saveChatSettings();
+    broadcastPresence({ type: "chat-state", enabled: chatEnabled });
+    sendJson(res, 200, { ok: true, enabled: chatEnabled, storedMessages: chatMessages.length });
+  } catch {
+    sendJson(res, 400, { error: "could not update chat" });
+  }
+}
+
+async function handleClearChat(req, res) {
+  const admin = requireAdmin(req, res);
+  if (!admin) return;
+  try {
+    chatMessages.splice(0, chatMessages.length);
+    clearTimeout(chatSaveTimer);
+    chatSaveTimer = null;
+    fs.writeFileSync(CHAT_PATH, "[]");
+    if (databasePool) await saveDatabaseState("chat-messages", []);
+    broadcastPresence({ type: "chat-cleared" });
+    sendJson(res, 200, { ok: true, storedMessages: 0 });
+  } catch {
+    sendJson(res, 500, { error: "could not clear messages" });
+  }
 }
 
 async function handleLogin(req, res) {
@@ -1528,15 +1613,17 @@ function storeChatMessage(message) {
   while (chatMessages.length > MAX_CHAT_MESSAGES || chatStorageBytes() > MAX_CHAT_BYTES) {
     chatMessages.shift();
   }
+  saveChatMessages();
 }
 
 function chatStorageBytes() {
   return Buffer.byteLength(JSON.stringify(chatMessages), "utf8");
 }
 
-function pruneChatMessages(aggressive = false) {
+function pruneChatMessages(aggressive = false, shrinkForMemory = aggressive) {
   const now = Date.now();
   let removed = 0;
+  let changed = false;
   const removalLimit = aggressive ? Number.POSITIVE_INFINITY : 25;
   for (let index = chatMessages.length - 1; index >= 0; index -= 1) {
     const message = chatMessages[index];
@@ -1545,12 +1632,15 @@ function pruneChatMessages(aggressive = false) {
     if (created < now - ttl && removed < removalLimit) {
       chatMessages.splice(index, 1);
       removed += 1;
+      changed = true;
     }
   }
-  const targetCount = aggressive ? 200 : MAX_CHAT_MESSAGES;
+  const targetCount = shrinkForMemory ? 200 : MAX_CHAT_MESSAGES;
   while (chatMessages.length > targetCount || chatStorageBytes() > MAX_CHAT_BYTES) {
     chatMessages.shift();
+    changed = true;
   }
+  if (changed) saveChatMessages();
 }
 
 function protectRuntimeResources() {
@@ -1620,6 +1710,46 @@ function loadDeviceRules() {
   }
 }
 
+function loadChatMessages() {
+  try {
+    const messages = JSON.parse(fs.readFileSync(CHAT_PATH, "utf8"));
+    return Array.isArray(messages) ? messages.slice(-25) : [];
+  } catch {
+    return [];
+  }
+}
+
+function loadChatSettings() {
+  try {
+    const settings = JSON.parse(fs.readFileSync(CHAT_SETTINGS_PATH, "utf8"));
+    return { enabled: settings.enabled !== false };
+  } catch {
+    return { enabled: true };
+  }
+}
+
+function saveChatSettings() {
+  const settings = { enabled: chatEnabled };
+  fs.promises.writeFile(CHAT_SETTINGS_PATH, JSON.stringify(settings)).catch(() => {});
+  queueDatabaseSave("chat-settings", settings);
+}
+
+function saveChatMessages(immediate = false) {
+  clearTimeout(chatSaveTimer);
+  const persist = () => {
+    chatSaveTimer = null;
+    const snapshot = JSON.stringify(chatMessages);
+    fs.promises.writeFile(CHAT_PATH, snapshot).catch(() => {});
+    queueDatabaseSave("chat-messages", JSON.parse(snapshot));
+  };
+  if (immediate) {
+    persist();
+    return;
+  }
+  chatSaveTimer = setTimeout(persist, 250);
+  chatSaveTimer.unref();
+}
+
 function saveDeviceRules() {
   const rules = {
     deviceTimeouts: [...deviceTimeouts.entries()].filter(([, until]) => until > Date.now()),
@@ -1653,7 +1783,7 @@ async function initializeDatabaseStorage() {
 
   const result = await databasePool.query(
     "SELECT key, value FROM app_state WHERE key = ANY($1::text[])",
-    [["accounts", "device-rules"]]
+    [["accounts", "device-rules", "chat-messages", "chat-settings"]]
   );
   const stored = new Map(result.rows.map((row) => [row.key, row.value]));
 
@@ -1678,6 +1808,23 @@ async function initializeDatabaseStorage() {
       deviceTimeouts: [...deviceTimeouts.entries()].filter(([, until]) => until > Date.now()),
       signupBlockedDevices: [...signupBlockedDevices]
     });
+  }
+
+  if (stored.has("chat-messages")) {
+    const messages = stored.get("chat-messages");
+    chatMessages.splice(0, chatMessages.length, ...(Array.isArray(messages) ? messages : []));
+    pruneChatMessages(true, false);
+    fs.writeFileSync(CHAT_PATH, JSON.stringify(chatMessages));
+  } else {
+    pruneChatMessages(true, false);
+    await saveDatabaseState("chat-messages", chatMessages);
+  }
+
+  if (stored.has("chat-settings")) {
+    chatEnabled = stored.get("chat-settings")?.enabled !== false;
+    fs.writeFileSync(CHAT_SETTINGS_PATH, JSON.stringify({ enabled: chatEnabled }));
+  } else {
+    await saveDatabaseState("chat-settings", { enabled: chatEnabled });
   }
 
   console.log("Permanent Neon/Postgres storage connected.");
@@ -1799,7 +1946,7 @@ function sendJson(res, status, body) {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Site-Token, X-Device-Id"
   });
   res.end(body === null ? "" : JSON.stringify(body));

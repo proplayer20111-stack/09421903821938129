@@ -107,7 +107,15 @@ database does not need to store large image or video files.
 
 The app now supports Neon automatically. Accounts, password hashes, profile
 names, profile media URLs, admin status, known devices, device timeouts, and
-signup blocks are stored permanently when `DATABASE_URL` is present.
+signup blocks are stored permanently when `DATABASE_URL` is present. Chat
+messages are also stored in Neon while keeping their existing 24-hour text and
+12-hour media expiration rules.
+
+Chat storage is additionally hard-capped at the newest 25 messages. The server
+deletes the oldest message whenever that cap is exceeded, and clients load only
+the newest 15 messages when connecting. The admin panel can disable all chat
+types or permanently clear the stored chat history from memory, local fallback
+storage, Neon, and connected browsers.
 
 1. Open <https://console.neon.tech/signup> and create a free Neon account.
 2. Create a project named `aba-squads-discord`.
@@ -130,7 +138,23 @@ Permanent Neon/Postgres storage connected.
 
 No SQL needs to be pasted into Neon. On first startup, the app creates an
 `app_state` table and imports the current `accounts.json` and
-`device-rules.json` values. Later changes are written to Neon automatically.
+`device-rules.json` values. Later changes, including bounded chat history, are
+written to Neon automatically.
+
+## Optional TURN Relay
+
+WebRTC works directly on many networks, but some cellular, school, work, and
+carrier-grade NAT networks require a TURN relay. Add these Render environment
+variables after obtaining TURN credentials from a provider:
+
+```text
+TURN_URL=turn:your-turn-host:3478
+TURN_USERNAME=your-username
+TURN_CREDENTIAL=your-credential
+```
+
+The site automatically adds the relay to its WebRTC configuration. Calls still
+use direct peer-to-peer paths when possible and use TURN only when needed.
 
 To verify it:
 
