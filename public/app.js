@@ -2166,18 +2166,24 @@ function createScreenPeerRecord(id, mode, screenId = crypto.randomUUID?.() || `$
     lastCurrentTime: 0,
     syncAttempts: 0,
     monitorTimer: null,
+    connectTimer: null,
     frameCallbackActive: false
   };
   state.screenPeers.set(id, screenPeer);
 
-  connection.addEventListener("icecandidate", (event) => {
-    if (event.candidate) {
-      send({ type: "screen-ice", to: id, screenId, candidate: event.candidate });
+  screenPeer.connectTimer = setTimeout(() => {
+    if (connection.connectionState === "connected" || state.screenPeers.get(id) !== screenPeer) return;
+    if (mode === "sender" && state.screenSharing) {
+      createScreenSenderPeer(id, true);
+    } else {
+      requestScreenShareSync(screenPeer);
     }
-  });
+  }, 12000);
   connection.addEventListener("connectionstatechange", () => {
     if (!state.screenPeers.has(id) || state.screenPeers.get(id) !== screenPeer) return;
     if (connection.connectionState === "connected") {
+      clearTimeout(screenPeer.connectTimer);
+      screenPeer.connectTimer = null;
       screenPeer.syncAttempts = 0;
       return;
     }
@@ -2224,6 +2230,7 @@ async function createScreenSenderPeer(peerId, recreate = false) {
     await tuneScreenSender(screenPeer.sender);
     const offer = await screenPeer.connection.createOffer();
     await screenPeer.connection.setLocalDescription(offer);
+    await waitForIceGatheringComplete(screenPeer.connection);
     send({
       type: "screen-offer",
       to: peerId,
@@ -2247,6 +2254,7 @@ async function handleScreenOffer(message) {
     await flushScreenIce(screenPeer);
     const answer = await screenPeer.connection.createAnswer();
     await screenPeer.connection.setLocalDescription(answer);
+    await waitForIceGatheringComplete(screenPeer.connection);
     send({
       type: "screen-answer",
       to: message.from,
@@ -2260,6 +2268,25 @@ async function handleScreenOffer(message) {
   }
 }
 
+function waitForIceGatheringComplete(connection, timeoutMs = 10000) {
+  if (connection.iceGatheringState === "complete") return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      connection.removeEventListener("icegatheringstatechange", check);
+      resolve();
+    };
+    const check = () => {
+      if (connection.iceGatheringState === "complete") finish();
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    connection.addEventListener("icegatheringstatechange", check);
+  });
+}
+
 async function flushScreenIce(screenPeer) {
   while (screenPeer.pendingIce.length) {
     await screenPeer.connection.addIceCandidate(screenPeer.pendingIce.shift());
@@ -2270,6 +2297,7 @@ function closeScreenPeer(id) {
   const screenPeer = state.screenPeers.get(id);
   if (!screenPeer) return;
   clearTimeout(screenPeer.monitorTimer);
+  clearTimeout(screenPeer.connectTimer);
   screenPeer.frameCallbackActive = false;
   screenPeer.connection.close();
   state.screenPeers.delete(id);
