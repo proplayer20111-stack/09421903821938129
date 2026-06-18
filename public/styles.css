@@ -19,8 +19,6 @@
   --good: #15803d;
   --danger: #dc2626;
   --danger-line: #b91c1c;
-  --toast-bg: rgba(17, 24, 39, 0.86);
-  --toast-text: #ffffff;
   --shadow: 0 24px 70px rgba(30, 64, 175, 0.16);
   --shadow-soft: 0 14px 34px rgba(15, 23, 42, 0.10);
   --blur: blur(24px) saturate(1.35);
@@ -38,8 +36,6 @@ body[data-theme="black"] {
   --soft: rgba(30, 41, 59, 0.58);
   --light: rgba(15, 23, 42, 0.62);
   --line-soft: rgba(148, 163, 184, 0.28);
-  --toast-bg: rgba(245, 247, 251, 0.92);
-  --toast-text: #05070b;
   --shadow: 0 24px 70px rgba(0, 0, 0, 0.34);
   --shadow-soft: 0 14px 34px rgba(0, 0, 0, 0.26);
 }
@@ -625,6 +621,13 @@ select:focus {
 .chat-log {
   height: clamp(280px, 42vh, 560px);
   overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  overflow-anchor: auto;
+  scrollbar-gutter: stable;
+  scroll-behavior: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
   padding: 10px;
   margin-bottom: 10px;
   border-radius: var(--radius-sm);
@@ -809,24 +812,6 @@ select:focus {
 
 .controls {
   justify-content: center;
-}
-
-.toast {
-  position: fixed;
-  left: 50%;
-  bottom: 16px;
-  transform: translate(-50%, 120%);
-  background: var(--toast-bg);
-  color: var(--toast-text);
-  padding: 10px 14px;
-  border-radius: 999px;
-  box-shadow: var(--shadow-soft);
-  z-index: 30;
-  transition: transform 160ms cubic-bezier(0.2, 0.9, 0.2, 1.1);
-}
-
-.toast.show {
-  transform: translate(-50%, 0);
 }
 
 .volume-menu {
@@ -1135,9 +1120,8 @@ select:focus {
   }
 
   .chat-entry {
-    content-visibility: auto;
-    contain-intrinsic-size: 48px;
-    animation-duration: 120ms;
+    content-visibility: visible;
+    contain: none;
   }
 
   .chat-media {

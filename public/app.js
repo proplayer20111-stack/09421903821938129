@@ -65,7 +65,6 @@ const kickStartButton = $("#kickStartButton");
 const kickCancelButton = $("#kickCancelButton");
 const kickVotes = $("#kickVotes");
 const audioMount = $("#audioMount");
-const toast = $("#toast");
 
 const AUTH_KEY = "callroom.auth.v3";
 const SITE_KEY = "callroom.site.v1";
@@ -2139,6 +2138,7 @@ function addChatBubble(message) {
   if (message.id) state.chatIds.add(message.id);
 
   const mine = message.from === state.id;
+  const followBottom = mine || isChatNearBottom();
   const row = document.createElement("div");
   const richMessage = ["media", "gif"].includes(message.kind);
   row.className = `chat-entry${mine ? " mine" : ""}${richMessage ? " media-entry" : ""}`;
@@ -2162,6 +2162,21 @@ function addChatBubble(message) {
   }
   row.append(avatar, bubble);
   chatLog.append(row);
+  if (followBottom) {
+    scrollChatToBottom();
+    const media = row.querySelector(".chat-media");
+    if (media) {
+      const eventName = media.tagName === "VIDEO" ? "loadedmetadata" : "load";
+      media.addEventListener(eventName, scrollChatToBottom, { once: true });
+    }
+  }
+}
+
+function isChatNearBottom() {
+  return chatLog.scrollHeight - chatLog.scrollTop - chatLog.clientHeight < 120;
+}
+
+function scrollChatToBottom() {
   chatLog.scrollTop = chatLog.scrollHeight;
 }
 
@@ -2469,13 +2484,7 @@ function isInsecureLanPhone() {
   return !window.isSecureContext && !["localhost", "127.0.0.1", "::1"].includes(location.hostname);
 }
 
-let toastTimer;
-function showToast(message) {
-  clearTimeout(toastTimer);
-  toast.textContent = message;
-  toast.classList.add("show");
-  toastTimer = setTimeout(() => toast.classList.remove("show"), 2200);
-}
+function showToast() {}
 
 function publicProfile() {
   return normalizeProfile(state.profile);

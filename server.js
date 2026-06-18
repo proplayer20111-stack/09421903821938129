@@ -624,7 +624,7 @@ function evaluateKickVote(vote) {
   const eligible = roomMembers.filter((member) => member.id !== vote.targetId && member.account);
   if (!eligible.length) return;
 
-  const threshold = eligible.length <= 2 ? eligible.length : eligible.length - 1;
+  const threshold = eligible.length;
   const yesVotes = eligible.filter((member) => vote.votes.has(member.id)).length;
   if (yesVotes < threshold) return;
 
@@ -692,7 +692,7 @@ function publicKickVote(vote) {
     createdAt: vote.createdAt,
     expiresAt: vote.expiresAt,
     votes: yesVotes,
-    threshold: eligibleCount <= 2 ? eligibleCount : Math.max(1, eligibleCount - 1),
+    threshold: eligibleCount,
     eligibleCount,
     voterNames,
     voterIds: [...vote.votes]
