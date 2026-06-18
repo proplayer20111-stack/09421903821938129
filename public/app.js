@@ -1719,7 +1719,6 @@ async function ensurePeer(peerInfo) {
     connection,
     audio: null,
     screenStream: null,
-    screenTransceiver: null,
     screenSender: null,
     volume: 1,
     remoteMuted: false,
@@ -1759,10 +1758,8 @@ async function ensurePeer(peerInfo) {
     connection.addTransceiver("audio", { direction: "recvonly" });
   }
 
-  peer.screenTransceiver = connection.addTransceiver("video", { direction: "sendrecv" });
-  peer.screenSender = peer.screenTransceiver.sender;
   if (state.screenTrack?.readyState === "live") {
-    await peer.screenSender.replaceTrack(state.screenTrack);
+    peer.screenSender = connection.addTrack(state.screenTrack, state.screenStream);
     await tuneScreenSender(peer.screenSender);
   }
 
@@ -2051,8 +2048,11 @@ async function toggleScreenShare() {
     }, { once: true });
 
     await Promise.all([...state.peers.values()].map(async (peer) => {
-      if (!peer.screenSender) return;
-      await peer.screenSender.replaceTrack(track);
+      if (peer.screenSender) {
+        await peer.screenSender.replaceTrack(track);
+      } else {
+        peer.screenSender = peer.connection.addTrack(track, displayStream);
+      }
       await tuneScreenSender(peer.screenSender);
       await negotiatePeer(peer);
     }));
@@ -2080,7 +2080,12 @@ async function stopScreenShare(notifyServer = true) {
 
   await Promise.all([...state.peers.values()].map(async (peer) => {
     if (!peer.screenSender) return;
-    await peer.screenSender.replaceTrack(null).catch(() => {});
+    try {
+      peer.connection.removeTrack(peer.screenSender);
+    } catch {
+      await peer.screenSender.replaceTrack(null).catch(() => {});
+    }
+    peer.screenSender = null;
     await negotiatePeer(peer);
   }));
   stream?.getTracks().forEach((track) => track.stop());
