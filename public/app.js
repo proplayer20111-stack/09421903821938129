@@ -29,6 +29,7 @@ const adminPanel = $("#adminPanel");
 const chatEnabledToggle = $("#chatEnabledToggle");
 const clearChatButton = $("#clearChatButton");
 const adminChatCount = $("#adminChatCount");
+const adminChatStatus = $("#adminChatStatus");
 const accountList = $("#accountList");
 const securityList = $("#securityList");
 const profilePreview = $("#profilePreview");
@@ -352,12 +353,13 @@ function continueAfterDevice() {
   timeoutScreen.hidden = true;
   try {
     const saved = JSON.parse(localStorage.getItem(AUTH_KEY) || "null");
-    if (saved?.token && saved?.profile) {
+    if (saved?.token?.includes(".") && saved?.profile) {
       applyAuth(saved);
       showCallScreen();
       connectPresence();
       return;
     }
+    if (saved?.token) localStorage.removeItem(AUTH_KEY);
   } catch {
     localStorage.removeItem(AUTH_KEY);
   }
@@ -867,11 +869,20 @@ async function loadSecurityEvents() {
 
 async function loadChatSettings() {
   if (!state.isAdmin) return;
-  const response = await fetch("/api/chat-settings", { headers: authHeaders() });
-  const result = await response.json();
-  if (!response.ok) return;
-  applyChatState(result.enabled !== false);
-  updateAdminChatCount(result.storedMessages || 0);
+  setAdminChatStatus("loading...");
+  try {
+    const response = await fetch("/api/chat-settings", { headers: authHeaders() });
+    const result = await response.json();
+    if (!response.ok) {
+      handleExpiredAdminSession(response);
+      throw new Error(result.error || "could not load chat controls");
+    }
+    applyChatState(result.enabled !== false);
+    updateAdminChatCount(result.storedMessages || 0);
+    setAdminChatStatus(result.enabled === false ? "chat is disabled" : "chat is enabled");
+  } catch (error) {
+    setAdminChatStatus(error.message || "could not load chat controls", true);
+  }
 }
 
 async function updateChatSetting() {
@@ -884,11 +895,16 @@ async function updateChatSetting() {
       body: JSON.stringify({ enabled })
     });
     const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "chat update failed");
+    if (!response.ok) {
+      handleExpiredAdminSession(response);
+      throw new Error(result.error || "chat update failed");
+    }
     applyChatState(result.enabled !== false);
     updateAdminChatCount(result.storedMessages || 0);
-  } catch {
+    setAdminChatStatus(result.enabled ? "chat enabled for everyone" : "chat disabled for everyone");
+  } catch (error) {
     chatEnabledToggle.checked = state.chatEnabled;
+    setAdminChatStatus(error.message || "chat update failed", true);
   } finally {
     chatEnabledToggle.disabled = false;
   }
@@ -904,11 +920,16 @@ async function clearAllChatMessages() {
       headers: authHeaders()
     });
     const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "delete failed");
+    if (!response.ok) {
+      handleExpiredAdminSession(response);
+      throw new Error(result.error || "delete failed");
+    }
     chatLog.textContent = "";
     state.chatIds.clear();
     updateAdminChatCount(0);
-  } catch {
+    setAdminChatStatus("all messages deleted");
+  } catch (error) {
+    setAdminChatStatus(error.message || "delete failed", true);
   } finally {
     clearChatButton.disabled = false;
     clearChatButton.textContent = "delete all messages";
@@ -929,6 +950,17 @@ function applyChatState(enabled) {
 
 function updateAdminChatCount(count) {
   adminChatCount.textContent = `${Number(count) || 0} stored messages`;
+}
+
+function setAdminChatStatus(message, error = false) {
+  adminChatStatus.textContent = message;
+  adminChatStatus.classList.toggle("error", error);
+}
+
+function handleExpiredAdminSession(response) {
+  if (![401, 403].includes(response.status)) return;
+  localStorage.removeItem(AUTH_KEY);
+  setAdminChatStatus("login expired - log out and log back in", true);
 }
 
 function renderSecurityEvents(events) {

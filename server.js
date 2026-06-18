@@ -71,6 +71,7 @@ const MAX_SOCKET_BUFFER_BYTES = 1024 * 1024;
 const MAX_ACCOUNTS = 5000;
 const MAX_PUSH_SUBSCRIPTIONS = 1000;
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const AUTH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const PUSH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MEMORY_SOFT_RSS_BYTES = 350 * 1024 * 1024;
 const MEMORY_HARD_RSS_BYTES = 425 * 1024 * 1024;
@@ -425,7 +426,7 @@ function handleMessage(client, message) {
       return;
     }
 
-    const session = sessions.get(String(message.token || ""));
+    const session = resolveSession(String(message.token || ""));
     if (!session || !accounts[session.username]) {
       send(client, { type: "auth-error" });
       return;
@@ -1416,13 +1417,14 @@ function handleAccountDelete(req, res, username) {
 }
 
 function authPayload(username, deviceId = "") {
-  const token = crypto.randomBytes(32).toString("hex");
-  const account = accounts[username];
-  sessions.set(token, {
+  const session = {
     username,
     deviceId: normalizeDeviceId(deviceId),
     createdAt: Date.now()
-  });
+  };
+  const token = createSessionToken(session);
+  const account = accounts[username];
+  sessions.set(token, session);
 
   return {
     token,
@@ -1434,7 +1436,7 @@ function authPayload(username, deviceId = "") {
 
 function requireAdmin(req, res) {
   const token = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-  const session = sessions.get(token);
+  const session = resolveSession(token);
   const account = session ? accounts[session.username] : null;
 
   if (!account?.isAdmin) {
@@ -1449,7 +1451,7 @@ function requireAdmin(req, res) {
 
 function requireAccount(req, res) {
   const token = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-  const session = sessions.get(token);
+  const session = resolveSession(token);
   const account = session ? accounts[session.username] : null;
   const timeout = getDeviceTimeout(getDeviceId(req));
   if (timeout.timedOut) {
@@ -1463,6 +1465,48 @@ function requireAccount(req, res) {
   }
 
   return { username: session.username, account };
+}
+
+function createSessionToken(session) {
+  const payload = Buffer.from(JSON.stringify({
+    u: session.username,
+    d: session.deviceId,
+    i: session.createdAt
+  })).toString("base64url");
+  const signature = crypto.createHmac("sha256", SITE_PASSWORD).update(payload).digest("base64url");
+  return `${payload}.${signature}`;
+}
+
+function resolveSession(token) {
+  const cleanToken = String(token || "");
+  const existing = sessions.get(cleanToken);
+  if (existing) return existing;
+
+  const [payload, signature] = cleanToken.split(".");
+  if (!payload || !signature) return null;
+  const expected = crypto.createHmac("sha256", SITE_PASSWORD).update(payload).digest();
+  let actual;
+  try {
+    actual = Buffer.from(signature, "base64url");
+  } catch {
+    return null;
+  }
+  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) return null;
+
+  try {
+    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    const session = {
+      username: normalizeAccountName(decoded.u),
+      deviceId: normalizeDeviceId(decoded.d),
+      createdAt: Number(decoded.i) || 0
+    };
+    if (!session.username || !accounts[session.username]) return null;
+    if (session.createdAt < Date.now() - AUTH_TOKEN_TTL_MS) return null;
+    sessions.set(cleanToken, session);
+    return session;
+  } catch {
+    return null;
+  }
 }
 
 function requireSiteAccess(req, res) {

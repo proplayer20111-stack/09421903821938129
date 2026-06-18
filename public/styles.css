@@ -523,6 +523,17 @@ select:focus {
   font-size: 12px;
 }
 
+.admin-chat-status {
+  min-height: 16px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.admin-chat-status.error {
+  color: var(--danger);
+}
+
 .chat-panel.chat-disabled {
   opacity: 0.72;
 }
