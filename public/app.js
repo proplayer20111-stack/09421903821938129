@@ -28,7 +28,6 @@ const youtubeUrl = $("#youtubeUrl");
 const youtubeOwner = $("#youtubeOwner");
 const youtubeStage = $("#youtubeStage");
 const youtubePlayerLock = $("#youtubePlayerLock");
-const youtubeStartButton = $("#youtubeStartButton");
 const youtubeFullscreenButton = $("#youtubeFullscreenButton");
 const youtubeControls = $("#youtubeControls");
 const youtubePlayButton = $("#youtubePlayButton");
@@ -2149,8 +2148,8 @@ async function ensureYoutubePlayer() {
       height: "100%",
       playerVars: {
         autoplay: 0,
-        controls: 0,
-        disablekb: 1,
+        controls: state.deviceType === "mobile" ? 1 : 0,
+        disablekb: state.deviceType === "mobile" ? 0 : 1,
         playsinline: 1,
         rel: 0,
         enablejsapi: 1,
@@ -2258,8 +2257,7 @@ function renderYoutubeRoom() {
   youtubeEmpty.hidden = state.youtube.queue.length > 0;
   const owner = isYoutubeController();
   youtubeControls.hidden = !active || !owner;
-  youtubePlayerLock.hidden = !active || owner;
-  youtubeStartButton.hidden = true;
+  youtubePlayerLock.hidden = state.deviceType === "mobile" || !active || owner;
   youtubeOwner.textContent = active
     ? owner
       ? "You queued this video - controls are yours"
@@ -2344,7 +2342,6 @@ function reconcileYoutubePlayer(force = false) {
     player.playVideo?.();
   } else if (state.youtube.status !== "playing" && playerState === window.YT?.PlayerState?.PLAYING) {
     player.pauseVideo?.();
-    youtubeStartButton.hidden = true;
   }
 }
 
