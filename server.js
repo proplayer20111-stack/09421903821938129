@@ -68,6 +68,9 @@ const MAX_CHAT_BYTES = 512 * 1024;
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 const MAX_CONCURRENT_UPLOADS = 2;
 const MAX_SOCKET_BUFFER_BYTES = 1024 * 1024;
+const MAX_SCREEN_RELAY_FRAME_BYTES = 256 * 1024;
+const MAX_SCREEN_RELAY_BACKLOG_BYTES = 512 * 1024;
+const MIN_SCREEN_RELAY_FRAME_INTERVAL_MS = 40;
 const MAX_ACCOUNTS = 5000;
 const MAX_PUSH_SUBSCRIPTIONS = 1000;
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -310,6 +313,8 @@ server.on("upgrade", (req, socket) => {
     inCall: false,
     screenSharing: false,
     room: null,
+    screenRelayViewers: new Set(),
+    lastScreenRelayFrameAt: 0,
     socket,
     buffer: Buffer.alloc(0),
     lastSeen: Date.now(),
@@ -338,6 +343,10 @@ function disconnectClient(client) {
   client.disconnected = true;
   const wasPresent = Boolean(client.account);
   connectedSockets.delete(client);
+  for (const member of connectedSockets) {
+    if (member.screenRelayViewers?.delete(client.id)) sendScreenRelayState(member);
+  }
+  client.screenRelayViewers?.clear();
   leaveRoom(client);
   if (wasPresent) {
     broadcastPresence({ type: "presence-left", id: client.id });
@@ -390,12 +399,17 @@ function readFrames(client) {
       continue;
     }
 
-    if (opcode !== 0x1) continue;
-
     const decoded = Buffer.alloc(payload.length);
     for (let i = 0; i < payload.length; i += 1) {
       decoded[i] = masked ? payload[i] ^ mask[i % 4] : payload[i];
     }
+
+    if (opcode === 0x2) {
+      handleBinaryMessage(client, decoded);
+      continue;
+    }
+
+    if (opcode !== 0x1) continue;
 
     try {
       handleMessage(client, JSON.parse(decoded.toString("utf8")));
@@ -511,6 +525,10 @@ function handleMessage(client, message) {
       }
     }
     client.screenSharing = enabled;
+    if (!enabled) {
+      client.screenRelayViewers.clear();
+      sendScreenRelayState(client);
+    }
     const announce = () => {
       if (!client.room || client.screenSharing !== enabled) return;
       broadcast(client.room, {
@@ -537,6 +555,22 @@ function handleMessage(client, message) {
       from: client.id,
       attempt: Math.max(1, Math.min(5, Number(message.attempt) || 1))
     });
+    return;
+  }
+
+  if (message.type === "screen-relay-request") {
+    if (!client.account) return;
+    const target = findConnectedClient(message.to);
+    if (!target?.account || !target.screenSharing || target.id === client.id) return;
+    target.screenRelayViewers.add(client.id);
+    sendScreenRelayState(target);
+    return;
+  }
+
+  if (message.type === "screen-relay-stop") {
+    if (!client.account) return;
+    const target = findConnectedClient(message.to);
+    if (target?.screenRelayViewers?.delete(client.id)) sendScreenRelayState(target);
     return;
   }
 
@@ -880,6 +914,54 @@ function findConnectedClient(id) {
     if (client.id === id) return client;
   }
   return null;
+}
+
+function sendScreenRelayState(client) {
+  if (!client?.account) return;
+  send(client, {
+    type: "screen-relay-state",
+    viewers: client.screenSharing ? client.screenRelayViewers.size : 0
+  });
+}
+
+function handleBinaryMessage(client, payload) {
+  if (!client.account || !client.inCall || !client.screenSharing || client.deviceType !== "pc") return;
+  if (payload.length < 7 || payload.length > MAX_SCREEN_RELAY_FRAME_BYTES + 6 || payload[0] !== 1) return;
+
+  const now = Date.now();
+  if (now - client.lastScreenRelayFrameAt < MIN_SCREEN_RELAY_FRAME_INTERVAL_MS) return;
+  client.lastScreenRelayFrameAt = now;
+
+  const format = payload[1];
+  if (format !== 1 && format !== 2) return;
+  const image = payload.subarray(6);
+  if (!image.length || image.length > MAX_SCREEN_RELAY_FRAME_BYTES) return;
+
+  const senderId = Buffer.from(client.id, "ascii");
+  if (senderId.length !== 36) return;
+  const outgoing = Buffer.allocUnsafe(42 + image.length);
+  outgoing[0] = 2;
+  senderId.copy(outgoing, 1);
+  outgoing[37] = format;
+  payload.copy(outgoing, 38, 2, 6);
+  image.copy(outgoing, 42);
+
+  let removedViewer = false;
+  for (const viewerId of [...client.screenRelayViewers]) {
+    const viewer = findConnectedClient(viewerId);
+    if (!viewer?.account || viewer.socket.destroyed) {
+      client.screenRelayViewers.delete(viewerId);
+      removedViewer = true;
+      continue;
+    }
+    if (viewer.socket.writableLength > MAX_SCREEN_RELAY_BACKLOG_BYTES) continue;
+    try {
+      writeFrame(viewer.socket, outgoing, 0x2);
+    } catch {
+      disconnectClient(viewer);
+    }
+  }
+  if (removedViewer) sendScreenRelayState(client);
 }
 
 function broadcast(room, message, exceptId) {

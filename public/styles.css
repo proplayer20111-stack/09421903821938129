@@ -526,6 +526,21 @@ select:focus {
   background: #05070b;
 }
 
+.screen-share-relay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #05070b;
+}
+
+.screen-share-relay[hidden] {
+  display: none;
+}
+
 .screen-share-view:fullscreen,
 .screen-share-view.screen-share-expanded {
   width: 100vw;
