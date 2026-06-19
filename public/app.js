@@ -2163,6 +2163,9 @@ async function ensureYoutubePlayer() {
       events: {
         onReady: () => {
           state.youtubeReady = true;
+          if (state.deviceType === "mobile") {
+            state.youtubePlayer.setPlaybackQuality?.("small");
+          }
           reconcileYoutubePlayer(true);
           startYoutubeTimers();
         },
@@ -2333,6 +2336,7 @@ function reconcileYoutubePlayer(force = false) {
   if (youtubePanel.hidden) return;
   const player = state.youtubePlayer;
   if (!player || !state.youtubeReady || !state.youtube.videoId) return;
+  const mobile = state.deviceType === "mobile";
   const expected = youtubeExpectedPosition();
   state.youtubeSuppressUntil = Date.now() + 900;
   if (state.youtubeLoadedVideoId !== state.youtube.videoId) {
@@ -2348,8 +2352,21 @@ function reconcileYoutubePlayer(force = false) {
   }
 
   const current = Number(player.getCurrentTime?.() || 0);
-  if (!state.youtubeSeeking && (force || Math.abs(current - expected) > 0.8)) player.seekTo(expected, true);
   const playerState = player.getPlayerState?.();
+  const buffering = playerState === window.YT?.PlayerState?.BUFFERING;
+  if (
+    !state.youtubeSeeking
+    && !buffering
+    && !(mobile && (state.youtubeNeedsGesture || state.youtubeNativeUnlock))
+    && (
+      mobile
+        ? Math.abs(current - expected) > 4
+        : force || Math.abs(current - expected) > 0.8
+    )
+  ) {
+    player.seekTo(expected, true);
+  }
+  if (mobile && (state.youtubeNeedsGesture || state.youtubeNativeUnlock)) return;
   if (state.youtube.status === "playing" && playerState !== window.YT?.PlayerState?.PLAYING) {
     player.playVideo?.();
     checkYoutubePlaybackStarted();
@@ -2364,6 +2381,10 @@ function reconcileYoutubePlayer(force = false) {
 function handleYoutubePlayerState(event) {
   updateYoutubeVideoTitle();
   if (event.data === window.YT?.PlayerState?.PLAYING) {
+    if (state.deviceType === "mobile") {
+      state.youtubePlayer?.unMute?.();
+      state.youtubePlayer?.setVolume?.(100);
+    }
     verifyYoutubePlaybackProgress(false);
   }
   if (!isYoutubeController() || Date.now() < state.youtubeSuppressUntil) return;
@@ -2384,11 +2405,19 @@ function startYoutubeOnThisDevice() {
   state.youtubeNeedsGesture = false;
   state.youtubeNativeUnlock = false;
   youtubeStartButton.hidden = true;
+  state.youtubePlayer.unMute?.();
+  state.youtubePlayer.setVolume?.(100);
   state.youtubePlayer.loadVideoById?.({
     videoId: state.youtube.videoId,
     startSeconds: expected
   });
+  state.youtubePlayer.unMute?.();
+  state.youtubePlayer.setVolume?.(100);
   state.youtubePlayer.playVideo?.();
+  setTimeout(() => {
+    state.youtubePlayer?.unMute?.();
+    state.youtubePlayer?.setVolume?.(100);
+  }, 250);
   verifyYoutubePlaybackProgress(true);
 }
 
@@ -2432,6 +2461,10 @@ function toggleYoutubePlayback() {
   state.youtubeSuppressUntil = Date.now() + 900;
   if (playing) state.youtubePlayer?.pauseVideo?.();
   else {
+    if (state.deviceType === "mobile") {
+      state.youtubePlayer?.unMute?.();
+      state.youtubePlayer?.setVolume?.(100);
+    }
     state.youtubePlayer?.playVideo?.();
     checkYoutubePlaybackStarted();
   }
@@ -2502,7 +2535,7 @@ function startYoutubeTimers() {
       if (youtubePanel.hidden) return;
       updateYoutubeTimeline();
       if (!state.youtubeSeeking) reconcileYoutubePlayer();
-    }, 500);
+    }, state.deviceType === "mobile" ? 1800 : 500);
   }
 }
 
