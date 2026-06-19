@@ -160,6 +160,8 @@ const state = {
   youtubeUiTimer: null,
   youtubeSeeking: false,
   youtubeNeedsGesture: false,
+  youtubeNativeUnlock: false,
+  youtubePlaybackProbeTimer: null,
   youtubeTitles: new Map(),
   inCall: false,
   muted: false,
@@ -2151,8 +2153,8 @@ async function ensureYoutubePlayer() {
       height: "100%",
       playerVars: {
         autoplay: 0,
-        controls: 0,
-        disablekb: 1,
+        controls: state.deviceType === "mobile" ? 1 : 0,
+        disablekb: state.deviceType === "mobile" ? 0 : 1,
         playsinline: 1,
         rel: 0,
         enablejsapi: 1,
@@ -2206,6 +2208,9 @@ function destroyYoutubePlayer() {
   state.youtubeLoadedVideoId = "";
   state.youtubeSuppressUntil = 0;
   state.youtubeNeedsGesture = false;
+  state.youtubeNativeUnlock = false;
+  clearTimeout(state.youtubePlaybackProbeTimer);
+  state.youtubePlaybackProbeTimer = null;
   try {
     state.youtubePlayer?.stopVideo?.();
     state.youtubePlayer?.destroy?.();
@@ -2261,10 +2266,16 @@ function renderYoutubeRoom() {
   youtubeEmpty.hidden = state.youtube.queue.length > 0;
   const owner = isYoutubeController();
   youtubeControls.hidden = !active || !owner;
-  youtubePlayerLock.hidden = !active || owner;
-  youtubeStartButton.hidden = !active || state.youtube.status !== "playing" || !state.youtubeNeedsGesture;
+  const localUnlock = state.youtubeNeedsGesture || state.youtubeNativeUnlock;
+  youtubePlayerLock.hidden = !active || owner || localUnlock;
+  youtubeStartButton.hidden = !active
+    || state.youtube.status !== "playing"
+    || !state.youtubeNeedsGesture
+    || state.youtubeNativeUnlock;
   youtubeOwner.textContent = active
-    ? owner
+    ? state.youtubeNativeUnlock
+      ? "Tap YouTube's red play button once to start on this device"
+      : owner
       ? "You queued this video - controls are yours"
       : `${state.youtube.controllerName || state.youtube.controller} controls this video`
     : "Queue a video to start";
@@ -2326,6 +2337,8 @@ function reconcileYoutubePlayer(force = false) {
   state.youtubeSuppressUntil = Date.now() + 900;
   if (state.youtubeLoadedVideoId !== state.youtube.videoId) {
     state.youtubeLoadedVideoId = state.youtube.videoId;
+    state.youtubeNeedsGesture = false;
+    state.youtubeNativeUnlock = false;
     const request = { videoId: state.youtube.videoId, startSeconds: expected };
     if (state.youtube.status === "playing") player.loadVideoById(request);
     else player.cueVideoById(request);
@@ -2343,6 +2356,7 @@ function reconcileYoutubePlayer(force = false) {
   } else if (state.youtube.status !== "playing" && playerState === window.YT?.PlayerState?.PLAYING) {
     player.pauseVideo?.();
     state.youtubeNeedsGesture = false;
+    state.youtubeNativeUnlock = false;
     youtubeStartButton.hidden = true;
   }
 }
@@ -2350,8 +2364,7 @@ function reconcileYoutubePlayer(force = false) {
 function handleYoutubePlayerState(event) {
   updateYoutubeVideoTitle();
   if (event.data === window.YT?.PlayerState?.PLAYING) {
-    state.youtubeNeedsGesture = false;
-    youtubeStartButton.hidden = true;
+    verifyYoutubePlaybackProgress(false);
   }
   if (!isYoutubeController() || Date.now() < state.youtubeSuppressUntil) return;
   if (event.data === window.YT?.PlayerState?.ENDED) {
@@ -2361,15 +2374,7 @@ function handleYoutubePlayerState(event) {
 }
 
 function checkYoutubePlaybackStarted() {
-  setTimeout(() => {
-    if (
-      youtubePanel.hidden
-      || state.youtube.status !== "playing"
-      || state.youtubePlayer?.getPlayerState?.() === window.YT?.PlayerState?.PLAYING
-    ) return;
-    state.youtubeNeedsGesture = true;
-    renderYoutubeRoom();
-  }, 700);
+  verifyYoutubePlaybackProgress(false);
 }
 
 function startYoutubeOnThisDevice() {
@@ -2377,15 +2382,36 @@ function startYoutubeOnThisDevice() {
   const expected = youtubeExpectedPosition();
   state.youtubeSuppressUntil = Date.now() + 1000;
   state.youtubeNeedsGesture = false;
+  state.youtubeNativeUnlock = false;
   youtubeStartButton.hidden = true;
-  state.youtubePlayer.seekTo?.(expected, true);
+  state.youtubePlayer.loadVideoById?.({
+    videoId: state.youtube.videoId,
+    startSeconds: expected
+  });
   state.youtubePlayer.playVideo?.();
-  setTimeout(() => {
-    if (state.youtubePlayer?.getPlayerState?.() !== window.YT?.PlayerState?.PLAYING) {
+  verifyYoutubePlaybackProgress(true);
+}
+
+function verifyYoutubePlaybackProgress(userInitiated) {
+  clearTimeout(state.youtubePlaybackProbeTimer);
+  const videoId = state.youtube.videoId;
+  const startedAt = Number(state.youtubePlayer?.getCurrentTime?.() || 0);
+  state.youtubePlaybackProbeTimer = setTimeout(() => {
+    state.youtubePlaybackProbeTimer = null;
+    if (youtubePanel.hidden || state.youtube.status !== "playing" || state.youtube.videoId !== videoId) return;
+    const current = Number(state.youtubePlayer?.getCurrentTime?.() || 0);
+    const playing = state.youtubePlayer?.getPlayerState?.() === window.YT?.PlayerState?.PLAYING;
+    if (playing && current > startedAt + 0.15) {
+      state.youtubeNeedsGesture = false;
+      state.youtubeNativeUnlock = false;
+    } else if (userInitiated) {
+      state.youtubeNeedsGesture = false;
+      state.youtubeNativeUnlock = true;
+    } else if (!state.youtubeNativeUnlock) {
       state.youtubeNeedsGesture = true;
-      renderYoutubeRoom();
     }
-  }, 800);
+    renderYoutubeRoom();
+  }, 1100);
 }
 
 function updateYoutubeVideoTitle() {
