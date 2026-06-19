@@ -581,13 +581,19 @@ function handleMessage(client, message) {
   }
 
   if (message.type === "youtube-queue-remove") {
-    if (!client.account || !client.inCall) {
-      send(client, { type: "youtube-error", message: "join the call to vote on queue removal" });
-      return;
-    }
+    if (!client.account) return;
     const index = youtubeRoom.queue.findIndex((item) => item.id === String(message.id || ""));
     if (index < 0) return;
     const item = youtubeRoom.queue[index];
+    if (item.addedBy === client.account) {
+      removeYoutubeQueueIndex(index);
+      broadcastYouTubeState();
+      return;
+    }
+    if (!client.inCall) {
+      send(client, { type: "youtube-error", message: "join the call to vote on queue removal" });
+      return;
+    }
     const voters = youtubeRemoveVotes.get(item.id) || new Set();
     voters.add(client.account);
     youtubeRemoveVotes.set(item.id, voters);
