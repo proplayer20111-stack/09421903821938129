@@ -1319,11 +1319,7 @@ async function handleSignal(message) {
     );
     if (message.from !== state.id) {
       if (message.enabled === true) {
-        setTimeout(() => {
-          if (state.onlineUsers.get(message.from)?.screenSharing && !remoteScreenHasFrames(message.from)) {
-            requestScreenRelay(message.from);
-          }
-        }, 2500);
+        requestScreenRelay(message.from, true);
         setTimeout(() => {
           if (state.onlineUsers.get(message.from)?.screenSharing && !state.screenPeers.get(message.from)?.stream) {
             requestScreenShareSync({
@@ -1980,11 +1976,7 @@ function updateOnlineUser(user, updateCounter = true) {
     setTimeout(() => createScreenSenderPeer(user.id), 100);
   }
   if (user.id !== state.id && user.screenSharing) {
-    setTimeout(() => {
-      if (state.onlineUsers.get(user.id)?.screenSharing && !remoteScreenHasFrames(user.id)) {
-        requestScreenRelay(user.id);
-      }
-    }, 2500);
+    requestScreenRelay(user.id, true);
   }
 }
 
@@ -2253,8 +2245,6 @@ function createScreenPeerRecord(id, mode, screenId = crypto.randomUUID?.() || `$
     setScreenShareCard(id, true, screenPeer.stream);
     event.track.addEventListener("unmute", () => {
       screenPeer.lastFrameAt = Date.now();
-      stopScreenRelayForViewer(id);
-      hideScreenRelayCanvas(id);
       setScreenShareCard(id, true, screenPeer.stream);
     });
     event.track.addEventListener("ended", () => {
@@ -2408,11 +2398,11 @@ function getScreenRelayFrame(id) {
   return relay;
 }
 
-function requestScreenRelay(id) {
+function requestScreenRelay(id, immediate = false) {
   if (!id || id === state.id || !state.token || !state.onlineUsers.get(id)?.screenSharing) return;
   const relay = getScreenRelayFrame(id);
   const now = Date.now();
-  if (now - relay.lastRequestAt < 2000) return;
+  if (!immediate && now - relay.lastRequestAt < 1500) return;
   relay.lastRequestAt = now;
   relay.requested = true;
   send({ type: "screen-relay-request", to: id });
@@ -2530,46 +2520,60 @@ async function startScreenRelayProducer() {
       return;
     }
     const startedAt = performance.now();
-    const socket = state.ws;
-    if (
-      socket?.readyState === WebSocket.OPEN
-      && socket.bufferedAmount < SCREEN_RELAY_MAX_BUFFERED_BYTES
-      && video.readyState >= 2
-      && video.videoWidth > 0
-      && video.videoHeight > 0
-    ) {
-      const scale = Math.min(1, 960 / video.videoWidth, 540 / video.videoHeight);
-      const width = Math.max(2, Math.round(video.videoWidth * scale / 2) * 2);
-      const height = Math.max(2, Math.round(video.videoHeight * scale / 2) * 2);
-      const canvas = state.screenRelayCanvas;
-      if (canvas.width !== width || canvas.height !== height) {
-        canvas.width = width;
-        canvas.height = height;
-      }
-      canvas.getContext("2d", { alpha: false }).drawImage(video, 0, 0, width, height);
-      let blob = await canvasToBlob(canvas, state.screenRelayMime, 0.48);
-      if (blob?.size > SCREEN_RELAY_MAX_FRAME_BYTES) {
-        blob = await canvasToBlob(canvas, "image/jpeg", 0.32);
-      }
+    try {
+      const socket = state.ws;
       if (
-        blob
-        && blob.size <= SCREEN_RELAY_MAX_FRAME_BYTES
-        && socket === state.ws
-        && socket.readyState === WebSocket.OPEN
+        socket?.readyState === WebSocket.OPEN
         && socket.bufferedAmount < SCREEN_RELAY_MAX_BUFFERED_BYTES
+        && video.readyState >= 2
+        && video.videoWidth > 0
+        && video.videoHeight > 0
       ) {
-        const image = new Uint8Array(await blob.arrayBuffer());
-        const packet = new Uint8Array(6 + image.length);
-        packet[0] = 1;
-        packet[1] = blob.type === "image/webp" ? 1 : 2;
-        state.screenRelaySequence = (state.screenRelaySequence + 1) >>> 0;
-        new DataView(packet.buffer).setUint32(2, state.screenRelaySequence);
-        packet.set(image, 6);
-        socket.send(packet);
+        const scale = Math.min(1, 960 / video.videoWidth, 540 / video.videoHeight);
+        const width = Math.max(2, Math.round(video.videoWidth * scale / 2) * 2);
+        const height = Math.max(2, Math.round(video.videoHeight * scale / 2) * 2);
+        const canvas = state.screenRelayCanvas;
+        if (canvas.width !== width || canvas.height !== height) {
+          canvas.width = width;
+          canvas.height = height;
+        }
+        canvas.getContext("2d", { alpha: false }).drawImage(video, 0, 0, width, height);
+        let blob = await canvasToBlob(canvas, state.screenRelayMime, 0.48);
+        if (blob?.size > SCREEN_RELAY_MAX_FRAME_BYTES) {
+          blob = await canvasToBlob(canvas, "image/jpeg", 0.32);
+        }
+        if (
+          blob
+          && blob.size <= SCREEN_RELAY_MAX_FRAME_BYTES
+          && socket === state.ws
+          && socket.readyState === WebSocket.OPEN
+          && socket.bufferedAmount < SCREEN_RELAY_MAX_BUFFERED_BYTES
+        ) {
+          const image = new Uint8Array(await blob.arrayBuffer());
+          const packet = new Uint8Array(6 + image.length);
+          packet[0] = 1;
+          packet[1] = blob.type === "image/webp" ? 1 : 2;
+          state.screenRelaySequence = (state.screenRelaySequence + 1) >>> 0;
+          new DataView(packet.buffer).setUint32(2, state.screenRelaySequence);
+          packet.set(image, 6);
+          socket.send(packet);
+        }
+      }
+    } catch {
+      // A single draw, encode, or send failure must not stop the relay loop.
+    } finally {
+      if (
+        generation === state.screenRelayGeneration
+        && state.screenSharing
+        && state.screenRelayViewers > 0
+        && state.screenTrack?.readyState === "live"
+      ) {
+        const wait = Math.max(0, SCREEN_RELAY_FRAME_INTERVAL_MS - (performance.now() - startedAt));
+        state.screenRelayTimer = setTimeout(produce, wait);
+      } else {
+        stopScreenRelayProducer();
       }
     }
-    const wait = Math.max(0, SCREEN_RELAY_FRAME_INTERVAL_MS - (performance.now() - startedAt));
-    state.screenRelayTimer = setTimeout(produce, wait);
   };
   state.screenRelayTimer = setTimeout(produce, 0);
 }
@@ -2622,8 +2626,6 @@ function monitorRemoteScreen(id) {
       screenPeer.syncAttempts = 0;
       const status = card.querySelector(".screen-share-status");
       if (status) status.hidden = true;
-      stopScreenRelayForViewer(id);
-      hideScreenRelayCanvas(id);
     } else if (relayActive) {
       const status = card.querySelector(".screen-share-status");
       if (status) status.hidden = true;
@@ -2636,6 +2638,7 @@ function monitorRemoteScreen(id) {
       requestScreenRelay(id);
       requestScreenShareSync(screenPeer);
     }
+    if (!relayActive) requestScreenRelay(id);
     screenPeer.monitorTimer = setTimeout(inspect, screenPeer.syncAttempts ? 2500 : 5000);
   };
   screenPeer.monitorTimer = setTimeout(inspect, 3500);
