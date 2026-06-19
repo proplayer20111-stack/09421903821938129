@@ -97,7 +97,6 @@ const kickStartButton = $("#kickStartButton");
 const kickCancelButton = $("#kickCancelButton");
 const kickVotes = $("#kickVotes");
 const audioMount = $("#audioMount");
-const toast = $("#toast");
 
 const AUTH_KEY = "callroom.auth.v3";
 const SITE_KEY = "callroom.site.v1";
@@ -4261,12 +4260,8 @@ function isInsecureLanPhone() {
   return !window.isSecureContext && !["localhost", "127.0.0.1", "::1"].includes(location.hostname);
 }
 
-let toastTimer;
-function showToast(message) {
-  clearTimeout(toastTimer);
-  toast.textContent = message;
-  toast.classList.add("show");
-  toastTimer = setTimeout(() => toast.classList.remove("show"), 2200);
+function showToast() {
+  // Floating toast notifications are permanently disabled.
 }
 
 function publicProfile() {
