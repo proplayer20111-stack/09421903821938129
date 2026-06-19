@@ -66,6 +66,10 @@
           <div class="top-actions">
             <button class="plain" id="profileButton" type="button">profile</button>
             <button class="plain" id="themeButton" type="button">themes</button>
+            <button class="plain youtube-button" id="youtubeButton" type="button">
+              youtube
+              <span class="youtube-live-dot" id="youtubeLiveDot" aria-label="YouTube player active" hidden></span>
+            </button>
             <button class="plain" id="adminButton" type="button" hidden>admin</button>
             <button class="plain" id="logoutButton" type="button">logout</button>
           </div>
@@ -109,6 +113,31 @@
 
             <div class="status" id="connectionState" hidden>offline</div>
             <div class="mic-status" id="micStatus">mic not joined</div>
+            <section class="youtube-panel" id="youtubePanel" hidden>
+              <div class="youtube-panel-head">
+                <div>
+                  <h2>Synced YouTube</h2>
+                  <div class="youtube-owner" id="youtubeOwner">Queue a video to start</div>
+                </div>
+                <button class="small" id="youtubeCloseButton" type="button">close</button>
+              </div>
+              <form class="youtube-add" id="youtubeForm">
+                <input id="youtubeUrl" type="text" inputmode="url" autocomplete="off" placeholder="paste a YouTube link" aria-label="YouTube link">
+                <button class="blue small" type="submit">add to queue</button>
+              </form>
+              <div class="youtube-stage" id="youtubeStage" hidden>
+                <div id="youtubePlayer"></div>
+                <div class="youtube-player-lock" id="youtubePlayerLock" hidden>Only the person who queued this video can control it</div>
+              </div>
+              <div class="youtube-controls" id="youtubeControls" hidden>
+                <button class="small" id="youtubePlayButton" type="button">play</button>
+                <input id="youtubeSeek" type="range" min="0" max="100" value="0" step="0.1" aria-label="video position">
+                <span id="youtubeTime">0:00 / 0:00</span>
+                <button class="small" id="youtubeNextButton" type="button">next</button>
+              </div>
+              <div class="youtube-empty" id="youtubeEmpty">Nothing queued yet.</div>
+              <div class="youtube-queue" id="youtubeQueue"></div>
+            </section>
             <div class="people" id="participants" hidden></div>
             <div class="kick-start-panel" id="kickStartPanel" hidden>
               <h2 id="kickTargetTitle">Vote kick</h2>
@@ -146,7 +175,7 @@
 
             <div class="controls" id="callControls" hidden>
               <button class="small" id="muteButton" type="button" aria-pressed="false">mute</button>
-              <button class="small" id="shareScreenButton" type="button" aria-pressed="false">share screen</button>
+              <button class="small" id="shareScreenButton" type="button" aria-pressed="false" hidden>share screen</button>
               <button class="red" id="leaveButton" type="button">leave</button>
             </div>
           </div>

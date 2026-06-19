@@ -19,6 +19,22 @@ const authPassword = $("#authPassword");
 const authButton = $("#authButton");
 const profileButton = $("#profileButton");
 const themeButton = $("#themeButton");
+const youtubeButton = $("#youtubeButton");
+const youtubeLiveDot = $("#youtubeLiveDot");
+const youtubePanel = $("#youtubePanel");
+const youtubeCloseButton = $("#youtubeCloseButton");
+const youtubeForm = $("#youtubeForm");
+const youtubeUrl = $("#youtubeUrl");
+const youtubeOwner = $("#youtubeOwner");
+const youtubeStage = $("#youtubeStage");
+const youtubePlayerLock = $("#youtubePlayerLock");
+const youtubeControls = $("#youtubeControls");
+const youtubePlayButton = $("#youtubePlayButton");
+const youtubeSeek = $("#youtubeSeek");
+const youtubeTime = $("#youtubeTime");
+const youtubeNextButton = $("#youtubeNextButton");
+const youtubeEmpty = $("#youtubeEmpty");
+const youtubeQueue = $("#youtubeQueue");
 const adminButton = $("#adminButton");
 const logoutButton = $("#logoutButton");
 const profilePanel = $("#profilePanel");
@@ -123,6 +139,26 @@ const state = {
   screenRelayViewers: 0,
   screenRelaySequence: 0,
   screenRelayMime: "",
+  youtube: {
+    queue: [],
+    currentIndex: -1,
+    currentId: "",
+    videoId: "",
+    controller: "",
+    controllerName: "",
+    status: "paused",
+    position: 0,
+    serverTime: 0,
+    revision: 0
+  },
+  youtubePlayer: null,
+  youtubeReady: false,
+  youtubeApplying: false,
+  youtubeSuppressUntil: 0,
+  youtubeLoadedVideoId: "",
+  youtubeSyncTimer: null,
+  youtubeUiTimer: null,
+  youtubeTitles: new Map(),
   inCall: false,
   muted: false,
   hasMic: false,
@@ -170,9 +206,11 @@ const rtcConfig = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
 };
 let rtcConfigPromise = Promise.resolve();
+let youtubeApiPromise = null;
 const SCREEN_RELAY_FRAME_INTERVAL_MS = 50;
 const SCREEN_RELAY_MAX_FRAME_BYTES = 256 * 1024;
 const SCREEN_RELAY_MAX_BUFFERED_BYTES = 512 * 1024;
+const SCREEN_SHARING_ENABLED = false;
 let lastMobileTouchEnd = 0;
 let lastMobileTouchTarget = null;
 let visualViewportFrame = null;
@@ -194,6 +232,16 @@ profileButton.addEventListener("click", () => {
 themeButton.addEventListener("click", () => {
   themePanel.hidden = !themePanel.hidden;
 });
+youtubeButton.addEventListener("click", openYoutubePanel);
+youtubeCloseButton.addEventListener("click", () => {
+  youtubePanel.hidden = true;
+});
+youtubeForm.addEventListener("submit", queueYoutubeVideo);
+youtubePlayButton.addEventListener("click", toggleYoutubePlayback);
+youtubeNextButton.addEventListener("click", playNextYoutubeVideo);
+youtubeSeek.addEventListener("input", updateYoutubeSeekPreview);
+youtubeSeek.addEventListener("change", seekYoutubeVideo);
+youtubeQueue.addEventListener("click", removeYoutubeQueueItem);
 themeMode.addEventListener("change", saveTheme);
 themeAccent.addEventListener("change", saveTheme);
 adminButton.addEventListener("click", async () => {
@@ -1300,6 +1348,16 @@ async function handleSignal(message) {
     return;
   }
 
+  if (message.type === "youtube-error") {
+    showToast(message.message || "YouTube sync failed");
+    return;
+  }
+
+  if (message.type === "youtube-state") {
+    await applyYoutubeState(message);
+    return;
+  }
+
   if (message.type === "screen-share-denied") {
     await stopScreenShare(false);
     showToast(message.message || "someone else is already sharing");
@@ -1488,7 +1546,7 @@ async function handleSignal(message) {
     for (const peer of message.peers) {
       await createPeer(peer, true);
     }
-    if (state.screenSharing && state.screenTrack?.readyState === "live") {
+    if (SCREEN_SHARING_ENABLED && state.screenSharing && state.screenTrack?.readyState === "live") {
       send({ type: "screen-share", enabled: true });
       setScreenShareCard(state.id, true, state.screenStream);
     }
@@ -2048,9 +2106,293 @@ function cleanupPeerConnections() {
   for (const id of [...state.peers.keys()]) removePeer(id, false);
 }
 
+function loadYoutubeApi() {
+  if (window.YT?.Player) return Promise.resolve(window.YT);
+  if (youtubeApiPromise) return youtubeApiPromise;
+  youtubeApiPromise = new Promise((resolve, reject) => {
+    const previousReady = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      previousReady?.();
+      resolve(window.YT);
+    };
+    const existing = document.querySelector('script[src="https://www.youtube.com/iframe_api"]');
+    if (!existing) {
+      const script = document.createElement("script");
+      script.src = "https://www.youtube.com/iframe_api";
+      script.async = true;
+      script.onerror = () => reject(new Error("YouTube player could not load"));
+      document.head.append(script);
+    }
+    setTimeout(() => {
+      if (!window.YT?.Player) reject(new Error("YouTube player timed out"));
+    }, 15000);
+  }).catch((error) => {
+    youtubeApiPromise = null;
+    throw error;
+  });
+  return youtubeApiPromise;
+}
+
+async function ensureYoutubePlayer() {
+  if (state.youtubePlayer) return state.youtubePlayer;
+  try {
+    const YT = await loadYoutubeApi();
+    state.youtubePlayer = new YT.Player("youtubePlayer", {
+      width: "100%",
+      height: "100%",
+      playerVars: {
+        autoplay: 0,
+        controls: 0,
+        disablekb: 1,
+        playsinline: 1,
+        rel: 0,
+        enablejsapi: 1,
+        origin: location.origin
+      },
+      events: {
+        onReady: () => {
+          state.youtubeReady = true;
+          reconcileYoutubePlayer(true);
+          startYoutubeTimers();
+        },
+        onStateChange: handleYoutubePlayerState,
+        onError: () => showToast("this YouTube video cannot be played here")
+      }
+    });
+    return state.youtubePlayer;
+  } catch (error) {
+    showToast(error.message || "YouTube player could not load");
+    return null;
+  }
+}
+
+async function openYoutubePanel() {
+  youtubePanel.hidden = false;
+  await ensureYoutubePlayer();
+  reconcileYoutubePlayer(true);
+  youtubeUrl.focus();
+}
+
+function queueYoutubeVideo(event) {
+  event.preventDefault();
+  const url = youtubeUrl.value.trim();
+  if (!url) {
+    showToast("paste a YouTube link");
+    return;
+  }
+  send({ type: "youtube-queue-add", url });
+  youtubeUrl.value = "";
+}
+
+async function applyYoutubeState(message) {
+  state.youtube = {
+    queue: Array.isArray(message.queue) ? message.queue.slice(0, 25) : [],
+    currentIndex: Number.isInteger(message.currentIndex) ? message.currentIndex : -1,
+    currentId: String(message.currentId || ""),
+    videoId: String(message.videoId || ""),
+    controller: String(message.controller || ""),
+    controllerName: String(message.controllerName || ""),
+    status: message.status === "playing" ? "playing" : "paused",
+    position: Math.max(0, Number(message.position) || 0),
+    serverTime: Number(message.serverTime) || Date.now(),
+    revision: Number(message.revision) || 0
+  };
+  renderYoutubeRoom();
+  if (state.youtube.videoId) {
+    await ensureYoutubePlayer();
+    reconcileYoutubePlayer();
+  } else if (state.youtubePlayer && state.youtubeReady) {
+    state.youtubeSuppressUntil = Date.now() + 800;
+    state.youtubePlayer.stopVideo?.();
+    state.youtubeLoadedVideoId = "";
+  }
+}
+
+function renderYoutubeRoom() {
+  const active = Boolean(state.youtube.videoId);
+  youtubeLiveDot.hidden = !active;
+  youtubeStage.hidden = !active;
+  youtubeEmpty.hidden = state.youtube.queue.length > 0;
+  const owner = isYoutubeController();
+  youtubeControls.hidden = !active || !owner;
+  youtubePlayerLock.hidden = !active || owner;
+  youtubeOwner.textContent = active
+    ? owner
+      ? "You queued this video — controls are yours"
+      : `${state.youtube.controllerName || state.youtube.controller} controls this video`
+    : "Queue a video to start";
+  youtubePlayButton.textContent = state.youtube.status === "playing" ? "pause" : "play";
+
+  youtubeQueue.textContent = "";
+  state.youtube.queue.forEach((item, index) => {
+    const row = document.createElement("div");
+    row.className = `youtube-queue-item${index === state.youtube.currentIndex ? " current" : ""}`;
+    const number = document.createElement("div");
+    number.className = "youtube-queue-number";
+    number.textContent = String(index + 1);
+    const info = document.createElement("div");
+    info.className = "youtube-queue-info";
+    const title = document.createElement("div");
+    title.className = "youtube-queue-title";
+    title.textContent = state.youtubeTitles.get(item.videoId) || `YouTube video ${item.videoId}`;
+    const meta = document.createElement("div");
+    meta.className = "youtube-queue-meta";
+    meta.textContent = `queued by ${item.addedByName || item.addedBy}`;
+    info.append(title, meta);
+    row.append(number, info);
+    if (item.addedBy === state.username) {
+      const remove = document.createElement("button");
+      remove.className = "small youtube-remove";
+      remove.type = "button";
+      remove.dataset.id = item.id;
+      remove.textContent = "remove";
+      row.append(remove);
+    }
+    youtubeQueue.append(row);
+  });
+  updateYoutubeTimeline();
+}
+
+function isYoutubeController() {
+  return Boolean(state.username && state.youtube.controller === state.username);
+}
+
+function youtubeExpectedPosition() {
+  const elapsed = state.youtube.status === "playing"
+    ? Math.max(0, (Date.now() - state.youtube.serverTime) / 1000)
+    : 0;
+  return Math.max(0, state.youtube.position + elapsed);
+}
+
+function reconcileYoutubePlayer(force = false) {
+  const player = state.youtubePlayer;
+  if (!player || !state.youtubeReady || !state.youtube.videoId) return;
+  const expected = youtubeExpectedPosition();
+  state.youtubeSuppressUntil = Date.now() + 900;
+  if (state.youtubeLoadedVideoId !== state.youtube.videoId) {
+    state.youtubeLoadedVideoId = state.youtube.videoId;
+    const request = { videoId: state.youtube.videoId, startSeconds: expected };
+    if (state.youtube.status === "playing") player.loadVideoById(request);
+    else player.cueVideoById(request);
+    setTimeout(updateYoutubeVideoTitle, 800);
+    return;
+  }
+
+  const current = Number(player.getCurrentTime?.() || 0);
+  if (force || Math.abs(current - expected) > 1.25) player.seekTo(expected, true);
+  const playerState = player.getPlayerState?.();
+  if (state.youtube.status === "playing" && playerState !== window.YT?.PlayerState?.PLAYING) {
+    player.playVideo?.();
+  } else if (state.youtube.status !== "playing" && playerState === window.YT?.PlayerState?.PLAYING) {
+    player.pauseVideo?.();
+  }
+}
+
+function handleYoutubePlayerState(event) {
+  updateYoutubeVideoTitle();
+  if (!isYoutubeController() || Date.now() < state.youtubeSuppressUntil) return;
+  const position = Number(state.youtubePlayer?.getCurrentTime?.() || 0);
+  if (event.data === window.YT?.PlayerState?.PLAYING) {
+    send({ type: "youtube-control", action: "play", position });
+  } else if (event.data === window.YT?.PlayerState?.PAUSED) {
+    send({ type: "youtube-control", action: "pause", position });
+  } else if (event.data === window.YT?.PlayerState?.ENDED) {
+    send({ type: "youtube-control", action: "ended", position });
+  }
+}
+
+function updateYoutubeVideoTitle() {
+  const data = state.youtubePlayer?.getVideoData?.();
+  if (!data?.video_id || !data?.title) return;
+  state.youtubeTitles.set(data.video_id, data.title);
+  renderYoutubeRoom();
+}
+
+function toggleYoutubePlayback() {
+  if (!isYoutubeController() || !state.youtube.videoId) return;
+  const position = Number(state.youtubePlayer?.getCurrentTime?.() || youtubeExpectedPosition());
+  const playing = state.youtube.status === "playing";
+  state.youtubeSuppressUntil = Date.now() + 900;
+  if (playing) state.youtubePlayer?.pauseVideo?.();
+  else state.youtubePlayer?.playVideo?.();
+  send({ type: "youtube-control", action: playing ? "pause" : "play", position });
+}
+
+function seekYoutubeVideo() {
+  if (!isYoutubeController() || !state.youtube.videoId) return;
+  const position = Math.max(0, Number(youtubeSeek.value) || 0);
+  const playing = state.youtube.status === "playing";
+  state.youtubeSuppressUntil = Date.now() + 900;
+  state.youtubePlayer?.seekTo?.(position, true);
+  if (playing) state.youtubePlayer?.playVideo?.();
+  send({ type: "youtube-control", action: "seek", position, playing });
+}
+
+function updateYoutubeSeekPreview() {
+  if (!isYoutubeController()) return;
+  youtubeTime.textContent = `${formatYoutubeTime(Number(youtubeSeek.value) || 0)} / ${formatYoutubeTime(youtubeDuration())}`;
+}
+
+function playNextYoutubeVideo() {
+  if (!isYoutubeController()) return;
+  send({
+    type: "youtube-control",
+    action: "next",
+    position: Number(state.youtubePlayer?.getCurrentTime?.() || 0)
+  });
+}
+
+function removeYoutubeQueueItem(event) {
+  const button = event.target.closest(".youtube-remove");
+  if (!button?.dataset.id) return;
+  send({ type: "youtube-queue-remove", id: button.dataset.id });
+}
+
+function youtubeDuration() {
+  return Math.max(0, Number(state.youtubePlayer?.getDuration?.() || 0));
+}
+
+function updateYoutubeTimeline() {
+  const duration = youtubeDuration();
+  const current = state.youtubeReady
+    ? Math.max(0, Number(state.youtubePlayer?.getCurrentTime?.() || youtubeExpectedPosition()))
+    : youtubeExpectedPosition();
+  youtubeSeek.max = String(Math.max(1, duration));
+  if (document.activeElement !== youtubeSeek) youtubeSeek.value = String(Math.min(current, Math.max(1, duration)));
+  youtubeTime.textContent = `${formatYoutubeTime(current)} / ${formatYoutubeTime(duration)}`;
+}
+
+function formatYoutubeTime(value) {
+  const seconds = Math.max(0, Math.floor(Number(value) || 0));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor(seconds % 3600 / 60);
+  const rest = String(seconds % 60).padStart(2, "0");
+  return hours ? `${hours}:${String(minutes).padStart(2, "0")}:${rest}` : `${minutes}:${rest}`;
+}
+
+function startYoutubeTimers() {
+  if (!state.youtubeUiTimer) {
+    state.youtubeUiTimer = setInterval(() => {
+      updateYoutubeTimeline();
+      if (!isYoutubeController() && state.youtube.status === "playing") reconcileYoutubePlayer();
+    }, 700);
+  }
+  if (!state.youtubeSyncTimer) {
+    state.youtubeSyncTimer = setInterval(() => {
+      if (!isYoutubeController() || state.youtube.status !== "playing" || !state.youtubeReady) return;
+      send({
+        type: "youtube-control",
+        action: "sync",
+        position: Number(state.youtubePlayer?.getCurrentTime?.() || youtubeExpectedPosition()),
+        playing: true
+      });
+    }, 2500);
+  }
+}
+
 function updateScreenShareButton() {
   const pc = state.deviceType === "pc";
-  shareScreenButton.hidden = !pc;
+  shareScreenButton.hidden = !SCREEN_SHARING_ENABLED || !pc;
   shareScreenButton.disabled = !state.inCall || state.screenStarting;
   shareScreenButton.textContent = state.screenSharing ? "stop sharing" : "share screen";
   shareScreenButton.classList.toggle("blue", state.screenSharing);
@@ -2064,6 +2406,7 @@ function activeScreenSharer() {
 }
 
 async function toggleScreenShare() {
+  if (!SCREEN_SHARING_ENABLED) return;
   if (state.screenSharing) {
     await stopScreenShare(true);
     return;
@@ -2652,6 +2995,12 @@ function setScreenShareCard(id, enabled, stream = null) {
   const relayCanvas = card.querySelector(".screen-share-relay");
   const status = card.querySelector(".screen-share-status");
   if (!view || !video) return;
+  if (!SCREEN_SHARING_ENABLED) {
+    view.hidden = true;
+    card.dataset.screenSharing = "false";
+    card.classList.remove("screen-sharing");
+    return;
+  }
 
   card.dataset.screenSharing = enabled ? "true" : "false";
   card.classList.toggle("screen-sharing", enabled);

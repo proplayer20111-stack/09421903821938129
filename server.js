@@ -40,6 +40,14 @@ const deviceTimeouts = new Map(deviceRules.deviceTimeouts || []);
 const signupBlockedDevices = new Set(deviceRules.signupBlockedDevices || []);
 const protectedDeviceIds = new Set();
 const connectedSockets = new Set();
+const youtubeRoom = {
+  queue: [],
+  currentIndex: -1,
+  status: "paused",
+  position: 0,
+  updatedAt: Date.now(),
+  revision: 0
+};
 const kickVotes = new Map();
 const callKicks = new Map();
 const voteKickCooldowns = new Map();
@@ -71,6 +79,9 @@ const MAX_SOCKET_BUFFER_BYTES = 1024 * 1024;
 const MAX_SCREEN_RELAY_FRAME_BYTES = 256 * 1024;
 const MAX_SCREEN_RELAY_BACKLOG_BYTES = 512 * 1024;
 const MIN_SCREEN_RELAY_FRAME_INTERVAL_MS = 40;
+const MAX_YOUTUBE_QUEUE_ITEMS = 25;
+const MAX_YOUTUBE_POSITION_SECONDS = 12 * 60 * 60;
+const SCREEN_SHARING_ENABLED = false;
 const MAX_ACCOUNTS = 5000;
 const MAX_PUSH_SUBSCRIPTIONS = 1000;
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -470,6 +481,7 @@ function handleMessage(client, message) {
       messages: chatMessages.slice(-CHAT_HISTORY_MESSAGES)
     });
     send(client, { type: "chat-state", enabled: chatEnabled });
+    send(client, youtubeStateMessage());
     broadcastPresence({ type: "presence-update", user: publicClient(client) }, client.id);
     broadcastPresenceSync();
     return;
@@ -506,7 +518,93 @@ function handleMessage(client, message) {
     return;
   }
 
+  if (message.type === "youtube-queue-add") {
+    if (!client.account) return;
+    const videoId = extractYouTubeVideoId(message.url || message.videoId);
+    if (!videoId) {
+      send(client, { type: "youtube-error", message: "enter a valid YouTube video link" });
+      return;
+    }
+    if (youtubeRoom.queue.length >= MAX_YOUTUBE_QUEUE_ITEMS) {
+      send(client, { type: "youtube-error", message: "the YouTube queue is full" });
+      return;
+    }
+    youtubeRoom.queue.push({
+      id: crypto.randomUUID(),
+      videoId,
+      addedBy: client.account,
+      addedByName: client.profile?.name || client.name || client.account,
+      addedAt: new Date().toISOString()
+    });
+    if (youtubeRoom.currentIndex < 0) {
+      youtubeRoom.currentIndex = 0;
+      youtubeRoom.status = "paused";
+      youtubeRoom.position = 0;
+      youtubeRoom.updatedAt = Date.now();
+    }
+    bumpYouTubeRevision();
+    broadcastYouTubeState();
+    return;
+  }
+
+  if (message.type === "youtube-control") {
+    if (!client.account) return;
+    const current = currentYouTubeItem();
+    if (!current || current.addedBy !== client.account) {
+      send(client, { type: "youtube-error", message: "only the person who queued this video can control it" });
+      return;
+    }
+    const action = String(message.action || "");
+    if (action === "play" || action === "pause" || action === "seek" || action === "sync") {
+      const position = normalizeYouTubePosition(message.position, currentYouTubePosition());
+      youtubeRoom.position = position;
+      youtubeRoom.status = action === "play"
+        ? "playing"
+        : action === "pause"
+          ? "paused"
+          : message.playing === true ? "playing" : "paused";
+      youtubeRoom.updatedAt = Date.now();
+      bumpYouTubeRevision();
+      broadcastYouTubeState();
+      return;
+    }
+    if (action === "next" || action === "ended") {
+      advanceYouTubeQueue(action === "ended");
+      broadcastYouTubeState();
+      return;
+    }
+    return;
+  }
+
+  if (message.type === "youtube-queue-remove") {
+    if (!client.account) return;
+    const index = youtubeRoom.queue.findIndex((item) => item.id === String(message.id || ""));
+    if (index < 0 || youtubeRoom.queue[index].addedBy !== client.account) {
+      send(client, { type: "youtube-error", message: "you can only remove videos you queued" });
+      return;
+    }
+    const removingCurrent = index === youtubeRoom.currentIndex;
+    youtubeRoom.queue.splice(index, 1);
+    if (!youtubeRoom.queue.length) {
+      resetYouTubeRoom();
+    } else if (index < youtubeRoom.currentIndex) {
+      youtubeRoom.currentIndex -= 1;
+    } else if (removingCurrent) {
+      youtubeRoom.currentIndex = Math.min(index, youtubeRoom.queue.length - 1);
+      youtubeRoom.status = "paused";
+      youtubeRoom.position = 0;
+      youtubeRoom.updatedAt = Date.now();
+    }
+    bumpYouTubeRevision();
+    broadcastYouTubeState();
+    return;
+  }
+
   if (message.type === "screen-share") {
+    if (!SCREEN_SHARING_ENABLED) {
+      send(client, { type: "screen-share-denied", message: "screen sharing is temporarily unavailable" });
+      return;
+    }
     if (!client.account || !client.room || !client.inCall) return;
     const enabled = message.enabled === true;
     if (enabled) {
@@ -914,6 +1012,85 @@ function findConnectedClient(id) {
     if (client.id === id) return client;
   }
   return null;
+}
+
+function extractYouTubeVideoId(input) {
+  const value = String(input || "").trim();
+  if (/^[a-zA-Z0-9_-]{11}$/.test(value)) return value;
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    let candidate = "";
+    if (host === "youtu.be") candidate = url.pathname.split("/").filter(Boolean)[0] || "";
+    if (host === "youtube.com" || host.endsWith(".youtube.com")) {
+      candidate = url.searchParams.get("v") || "";
+      const parts = url.pathname.split("/").filter(Boolean);
+      if (!candidate && ["embed", "shorts", "live"].includes(parts[0])) candidate = parts[1] || "";
+    }
+    return /^[a-zA-Z0-9_-]{11}$/.test(candidate) ? candidate : "";
+  } catch {
+    return "";
+  }
+}
+
+function normalizeYouTubePosition(value, fallback = 0) {
+  const position = Number(value);
+  if (!Number.isFinite(position)) return Math.max(0, Math.min(MAX_YOUTUBE_POSITION_SECONDS, Number(fallback) || 0));
+  return Math.max(0, Math.min(MAX_YOUTUBE_POSITION_SECONDS, position));
+}
+
+function currentYouTubeItem() {
+  return youtubeRoom.queue[youtubeRoom.currentIndex] || null;
+}
+
+function currentYouTubePosition() {
+  if (youtubeRoom.status !== "playing") return youtubeRoom.position;
+  return normalizeYouTubePosition(youtubeRoom.position + (Date.now() - youtubeRoom.updatedAt) / 1000);
+}
+
+function youtubeStateMessage() {
+  const current = currentYouTubeItem();
+  return {
+    type: "youtube-state",
+    queue: youtubeRoom.queue,
+    currentIndex: youtubeRoom.currentIndex,
+    currentId: current?.id || "",
+    videoId: current?.videoId || "",
+    controller: current?.addedBy || "",
+    controllerName: current?.addedByName || "",
+    status: youtubeRoom.status,
+    position: currentYouTubePosition(),
+    serverTime: Date.now(),
+    revision: youtubeRoom.revision
+  };
+}
+
+function bumpYouTubeRevision() {
+  youtubeRoom.revision += 1;
+}
+
+function broadcastYouTubeState() {
+  broadcastPresence(youtubeStateMessage());
+}
+
+function resetYouTubeRoom() {
+  youtubeRoom.queue = [];
+  youtubeRoom.currentIndex = -1;
+  youtubeRoom.status = "paused";
+  youtubeRoom.position = 0;
+  youtubeRoom.updatedAt = Date.now();
+}
+
+function advanceYouTubeQueue(keepPlaying) {
+  if (youtubeRoom.currentIndex + 1 >= youtubeRoom.queue.length) {
+    resetYouTubeRoom();
+  } else {
+    youtubeRoom.currentIndex += 1;
+    youtubeRoom.status = keepPlaying ? "playing" : "paused";
+    youtubeRoom.position = 0;
+    youtubeRoom.updatedAt = Date.now();
+  }
+  bumpYouTubeRevision();
 }
 
 function sendScreenRelayState(client) {
