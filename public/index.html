@@ -66,10 +66,6 @@
           <div class="top-actions">
             <button class="plain" id="profileButton" type="button">profile</button>
             <button class="plain" id="themeButton" type="button">themes</button>
-            <button class="plain youtube-button" id="youtubeButton" type="button">
-              youtube
-              <span class="youtube-live-dot" id="youtubeLiveDot" aria-label="YouTube player active" hidden></span>
-            </button>
             <button class="plain" id="adminButton" type="button" hidden>admin</button>
             <button class="plain" id="logoutButton" type="button">logout</button>
           </div>
@@ -116,10 +112,13 @@
             <section class="youtube-panel" id="youtubePanel" hidden>
               <div class="youtube-panel-head">
                 <div>
-                  <h2>Synced YouTube</h2>
+                  <h2>YouTube</h2>
                   <div class="youtube-owner" id="youtubeOwner">Queue a video to start</div>
                 </div>
-                <button class="small" id="youtubeCloseButton" type="button">close</button>
+                <div class="youtube-head-actions">
+                  <button class="youtube-fullscreen" id="youtubeFullscreenButton" type="button" aria-label="enter YouTube fullscreen" title="fullscreen">⛶</button>
+                  <button class="small" id="youtubeCloseButton" type="button">close</button>
+                </div>
               </div>
               <form class="youtube-add" id="youtubeForm">
                 <input id="youtubeUrl" type="text" inputmode="url" autocomplete="off" placeholder="paste a YouTube link" aria-label="YouTube link">
@@ -176,6 +175,10 @@
             <div class="controls" id="callControls" hidden>
               <button class="small" id="muteButton" type="button" aria-pressed="false">mute</button>
               <button class="small" id="shareScreenButton" type="button" aria-pressed="false" hidden>share screen</button>
+              <button class="small youtube-button" id="youtubeButton" type="button" aria-pressed="false">
+                youtube
+                <span class="youtube-live-dot" id="youtubeLiveDot" aria-label="YouTube queue active" hidden></span>
+              </button>
               <button class="red" id="leaveButton" type="button">leave</button>
             </div>
           </div>

@@ -28,6 +28,7 @@ const youtubeUrl = $("#youtubeUrl");
 const youtubeOwner = $("#youtubeOwner");
 const youtubeStage = $("#youtubeStage");
 const youtubePlayerLock = $("#youtubePlayerLock");
+const youtubeFullscreenButton = $("#youtubeFullscreenButton");
 const youtubeControls = $("#youtubeControls");
 const youtubePlayButton = $("#youtubePlayButton");
 const youtubeSeek = $("#youtubeSeek");
@@ -156,8 +157,8 @@ const state = {
   youtubeApplying: false,
   youtubeSuppressUntil: 0,
   youtubeLoadedVideoId: "",
-  youtubeSyncTimer: null,
   youtubeUiTimer: null,
+  youtubeSeeking: false,
   youtubeTitles: new Map(),
   inCall: false,
   muted: false,
@@ -232,15 +233,20 @@ profileButton.addEventListener("click", () => {
 themeButton.addEventListener("click", () => {
   themePanel.hidden = !themePanel.hidden;
 });
-youtubeButton.addEventListener("click", openYoutubePanel);
-youtubeCloseButton.addEventListener("click", () => {
-  youtubePanel.hidden = true;
-});
+youtubeButton.addEventListener("click", toggleYoutubePanel);
+youtubeCloseButton.addEventListener("click", hideYoutubePanel);
+youtubeFullscreenButton.addEventListener("click", toggleYoutubeFullscreen);
 youtubeForm.addEventListener("submit", queueYoutubeVideo);
 youtubePlayButton.addEventListener("click", toggleYoutubePlayback);
 youtubeNextButton.addEventListener("click", playNextYoutubeVideo);
 youtubeSeek.addEventListener("input", updateYoutubeSeekPreview);
 youtubeSeek.addEventListener("change", seekYoutubeVideo);
+youtubeSeek.addEventListener("pointerdown", () => {
+  state.youtubeSeeking = true;
+});
+youtubeSeek.addEventListener("pointerup", () => {
+  state.youtubeSeeking = false;
+});
 youtubeQueue.addEventListener("click", removeYoutubeQueueItem);
 themeMode.addEventListener("change", saveTheme);
 themeAccent.addEventListener("change", saveTheme);
@@ -270,6 +276,7 @@ participants.addEventListener("click", (event) => {
   if (button) togglePeerMute(button.dataset.id);
 });
 document.addEventListener("fullscreenchange", updateScreenShareFullscreenButtons);
+document.addEventListener("fullscreenchange", updateYoutubeFullscreenButton);
 participants.addEventListener("contextmenu", (event) => {
   const card = event.target.closest(".person");
   if (!card || card.dataset.local === "true") return;
@@ -2166,11 +2173,47 @@ async function ensureYoutubePlayer() {
   }
 }
 
-async function openYoutubePanel() {
+async function toggleYoutubePanel() {
+  if (!youtubePanel.hidden) {
+    hideYoutubePanel();
+    return;
+  }
+  await showYoutubePanel();
+}
+
+async function showYoutubePanel() {
   youtubePanel.hidden = false;
+  youtubeButton.setAttribute("aria-pressed", "true");
   await ensureYoutubePlayer();
   reconcileYoutubePlayer(true);
   youtubeUrl.focus();
+}
+
+function hideYoutubePanel() {
+  if (document.fullscreenElement === youtubePanel) document.exitFullscreen().catch(() => {});
+  youtubePanel.classList.remove("youtube-expanded");
+  youtubePanel.hidden = true;
+  youtubeButton.setAttribute("aria-pressed", "false");
+  destroyYoutubePlayer();
+}
+
+function destroyYoutubePlayer() {
+  clearInterval(state.youtubeUiTimer);
+  state.youtubeUiTimer = null;
+  state.youtubeReady = false;
+  state.youtubeLoadedVideoId = "";
+  state.youtubeSuppressUntil = 0;
+  try {
+    state.youtubePlayer?.stopVideo?.();
+    state.youtubePlayer?.destroy?.();
+  } catch {
+  }
+  state.youtubePlayer = null;
+  if (!document.getElementById("youtubePlayer")) {
+    const mount = document.createElement("div");
+    mount.id = "youtubePlayer";
+    youtubeStage.prepend(mount);
+  }
 }
 
 function queueYoutubeVideo(event) {
@@ -2198,10 +2241,10 @@ async function applyYoutubeState(message) {
     revision: Number(message.revision) || 0
   };
   renderYoutubeRoom();
-  if (state.youtube.videoId) {
+  if (state.youtube.videoId && !youtubePanel.hidden) {
     await ensureYoutubePlayer();
     reconcileYoutubePlayer();
-  } else if (state.youtubePlayer && state.youtubeReady) {
+  } else if (!state.youtube.videoId && state.youtubePlayer && state.youtubeReady) {
     state.youtubeSuppressUntil = Date.now() + 800;
     state.youtubePlayer.stopVideo?.();
     state.youtubeLoadedVideoId = "";
@@ -2218,7 +2261,7 @@ function renderYoutubeRoom() {
   youtubePlayerLock.hidden = !active || owner;
   youtubeOwner.textContent = active
     ? owner
-      ? "You queued this video — controls are yours"
+      ? "You queued this video - controls are yours"
       : `${state.youtube.controllerName || state.youtube.controller} controls this video`
     : "Queue a video to start";
   youtubePlayButton.textContent = state.youtube.status === "playing" ? "pause" : "play";
@@ -2240,12 +2283,16 @@ function renderYoutubeRoom() {
     meta.textContent = `queued by ${item.addedByName || item.addedBy}`;
     info.append(title, meta);
     row.append(number, info);
-    if (item.addedBy === state.username) {
+    if (state.inCall) {
       const remove = document.createElement("button");
       remove.className = "small youtube-remove";
       remove.type = "button";
       remove.dataset.id = item.id;
-      remove.textContent = "remove";
+      const voters = Array.isArray(item.removeVotes) ? item.removeVotes : [];
+      const required = Math.max(1, Number(item.removeRequired) || 1);
+      const voted = voters.includes(state.username);
+      remove.textContent = voted ? `voted ${voters.length}/${required}` : `remove ${voters.length}/${required}`;
+      remove.disabled = voted;
       row.append(remove);
     }
     youtubeQueue.append(row);
@@ -2265,6 +2312,7 @@ function youtubeExpectedPosition() {
 }
 
 function reconcileYoutubePlayer(force = false) {
+  if (youtubePanel.hidden) return;
   const player = state.youtubePlayer;
   if (!player || !state.youtubeReady || !state.youtube.videoId) return;
   const expected = youtubeExpectedPosition();
@@ -2279,7 +2327,7 @@ function reconcileYoutubePlayer(force = false) {
   }
 
   const current = Number(player.getCurrentTime?.() || 0);
-  if (force || Math.abs(current - expected) > 1.25) player.seekTo(expected, true);
+  if (!state.youtubeSeeking && (force || Math.abs(current - expected) > 0.8)) player.seekTo(expected, true);
   const playerState = player.getPlayerState?.();
   if (state.youtube.status === "playing" && playerState !== window.YT?.PlayerState?.PLAYING) {
     player.playVideo?.();
@@ -2291,12 +2339,8 @@ function reconcileYoutubePlayer(force = false) {
 function handleYoutubePlayerState(event) {
   updateYoutubeVideoTitle();
   if (!isYoutubeController() || Date.now() < state.youtubeSuppressUntil) return;
-  const position = Number(state.youtubePlayer?.getCurrentTime?.() || 0);
-  if (event.data === window.YT?.PlayerState?.PLAYING) {
-    send({ type: "youtube-control", action: "play", position });
-  } else if (event.data === window.YT?.PlayerState?.PAUSED) {
-    send({ type: "youtube-control", action: "pause", position });
-  } else if (event.data === window.YT?.PlayerState?.ENDED) {
+  if (event.data === window.YT?.PlayerState?.ENDED) {
+    const position = Number(state.youtubePlayer?.getCurrentTime?.() || 0);
     send({ type: "youtube-control", action: "ended", position });
   }
 }
@@ -2312,9 +2356,14 @@ function toggleYoutubePlayback() {
   if (!isYoutubeController() || !state.youtube.videoId) return;
   const position = Number(state.youtubePlayer?.getCurrentTime?.() || youtubeExpectedPosition());
   const playing = state.youtube.status === "playing";
+  const nextStatus = playing ? "paused" : "playing";
+  state.youtube.status = nextStatus;
+  state.youtube.position = position;
+  state.youtube.serverTime = Date.now();
   state.youtubeSuppressUntil = Date.now() + 900;
   if (playing) state.youtubePlayer?.pauseVideo?.();
   else state.youtubePlayer?.playVideo?.();
+  renderYoutubeRoom();
   send({ type: "youtube-control", action: playing ? "pause" : "play", position });
 }
 
@@ -2322,6 +2371,9 @@ function seekYoutubeVideo() {
   if (!isYoutubeController() || !state.youtube.videoId) return;
   const position = Math.max(0, Number(youtubeSeek.value) || 0);
   const playing = state.youtube.status === "playing";
+  state.youtube.position = position;
+  state.youtube.serverTime = Date.now();
+  state.youtubeSeeking = false;
   state.youtubeSuppressUntil = Date.now() + 900;
   state.youtubePlayer?.seekTo?.(position, true);
   if (playing) state.youtubePlayer?.playVideo?.();
@@ -2358,7 +2410,9 @@ function updateYoutubeTimeline() {
     ? Math.max(0, Number(state.youtubePlayer?.getCurrentTime?.() || youtubeExpectedPosition()))
     : youtubeExpectedPosition();
   youtubeSeek.max = String(Math.max(1, duration));
-  if (document.activeElement !== youtubeSeek) youtubeSeek.value = String(Math.min(current, Math.max(1, duration)));
+  if (!state.youtubeSeeking && document.activeElement !== youtubeSeek) {
+    youtubeSeek.value = String(Math.min(current, Math.max(1, duration)));
+  }
   youtubeTime.textContent = `${formatYoutubeTime(current)} / ${formatYoutubeTime(duration)}`;
 }
 
@@ -2373,21 +2427,34 @@ function formatYoutubeTime(value) {
 function startYoutubeTimers() {
   if (!state.youtubeUiTimer) {
     state.youtubeUiTimer = setInterval(() => {
+      if (youtubePanel.hidden) return;
       updateYoutubeTimeline();
-      if (!isYoutubeController() && state.youtube.status === "playing") reconcileYoutubePlayer();
-    }, 700);
+      if (!state.youtubeSeeking) reconcileYoutubePlayer();
+    }, 500);
   }
-  if (!state.youtubeSyncTimer) {
-    state.youtubeSyncTimer = setInterval(() => {
-      if (!isYoutubeController() || state.youtube.status !== "playing" || !state.youtubeReady) return;
-      send({
-        type: "youtube-control",
-        action: "sync",
-        position: Number(state.youtubePlayer?.getCurrentTime?.() || youtubeExpectedPosition()),
-        playing: true
-      });
-    }, 2500);
+}
+
+async function toggleYoutubeFullscreen() {
+  if (youtubePanel.hidden) return;
+  try {
+    if (document.fullscreenElement === youtubePanel) {
+      await document.exitFullscreen();
+    } else if (youtubePanel.requestFullscreen) {
+      await youtubePanel.requestFullscreen();
+    } else {
+      youtubePanel.classList.toggle("youtube-expanded");
+    }
+  } catch {
+    youtubePanel.classList.toggle("youtube-expanded");
   }
+  updateYoutubeFullscreenButton();
+}
+
+function updateYoutubeFullscreenButton() {
+  const expanded = document.fullscreenElement === youtubePanel || youtubePanel.classList.contains("youtube-expanded");
+  youtubeFullscreenButton.textContent = expanded ? "×" : "⛶";
+  youtubeFullscreenButton.setAttribute("aria-label", expanded ? "exit YouTube fullscreen" : "enter YouTube fullscreen");
+  youtubeFullscreenButton.title = expanded ? "exit fullscreen" : "fullscreen";
 }
 
 function updateScreenShareButton() {
@@ -3387,6 +3454,7 @@ function sendLeaveNow() {
 }
 
 function resetLocalCall(showMessage = true) {
+  hideYoutubePanel();
   stopScreenShare(false);
   state.stream?.getTracks().forEach((track) => track.stop());
   state.rawStream?.getTracks().forEach((track) => track.stop());

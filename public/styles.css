@@ -601,9 +601,9 @@ body[data-layout="mobile"] #shareScreenButton {
 
 .youtube-panel {
   margin: 10px 0 14px;
-  padding: 14px;
+  padding: 12px;
   border: 1px solid var(--line);
-  border-radius: 18px;
+  border-radius: 14px;
   background: var(--panel);
 }
 
@@ -618,11 +618,32 @@ body[data-layout="mobile"] #shareScreenButton {
 
 .youtube-panel-head {
   justify-content: space-between;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .youtube-panel-head h2 {
   margin: 0;
+  font-size: 18px;
+}
+
+.youtube-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.youtube-fullscreen {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  font-size: 15px;
+  line-height: 1;
 }
 
 .youtube-owner,
@@ -647,7 +668,7 @@ body[data-layout="mobile"] #shareScreenButton {
   width: 100%;
   aspect-ratio: 16 / 9;
   border: 1px solid var(--line-soft);
-  border-radius: 14px;
+  border-radius: 10px;
   background: #050505;
 }
 
@@ -678,6 +699,7 @@ body[data-layout="mobile"] #shareScreenButton {
 
 .youtube-controls {
   margin-top: 10px;
+  padding: 2px;
 }
 
 .youtube-controls input[type="range"] {
@@ -699,15 +721,15 @@ body[data-layout="mobile"] #shareScreenButton {
 
 .youtube-queue {
   display: grid;
-  gap: 7px;
-  margin-top: 12px;
+  gap: 6px;
+  margin-top: 10px;
 }
 
 .youtube-queue-item {
   min-width: 0;
-  padding: 8px 10px;
+  padding: 7px 9px;
   border: 1px solid var(--line-soft);
-  border-radius: 12px;
+  border-radius: 10px;
 }
 
 .youtube-queue-item.current {
@@ -735,6 +757,37 @@ body[data-layout="mobile"] #shareScreenButton {
 
 .youtube-remove {
   flex: 0 0 auto;
+  min-width: 72px;
+}
+
+.youtube-panel:fullscreen,
+.youtube-panel.youtube-expanded {
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  margin: 0;
+  padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  border: 0;
+  border-radius: 0;
+  background: var(--panel);
+  overflow: auto;
+}
+
+.youtube-panel.youtube-expanded {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+
+.youtube-panel:fullscreen .youtube-stage,
+.youtube-panel.youtube-expanded .youtube-stage {
+  max-height: calc(100vh - 190px);
+}
+
+.youtube-panel:fullscreen .youtube-queue,
+.youtube-panel.youtube-expanded .youtube-queue {
+  max-height: 120px;
+  overflow-y: auto;
 }
 
 .profile-row {

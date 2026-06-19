@@ -48,6 +48,7 @@ const youtubeRoom = {
   updatedAt: Date.now(),
   revision: 0
 };
+const youtubeRemoveVotes = new Map();
 const kickVotes = new Map();
 const callKicks = new Map();
 const voteKickCooldowns = new Map();
@@ -354,6 +355,7 @@ function disconnectClient(client) {
   client.disconnected = true;
   const wasPresent = Boolean(client.account);
   connectedSockets.delete(client);
+  refreshYoutubeRemovalVotes();
   for (const member of connectedSockets) {
     if (member.screenRelayViewers?.delete(client.id)) sendScreenRelayState(member);
   }
@@ -501,6 +503,7 @@ function handleMessage(client, message) {
     const wasCallEmpty = !rooms.get("main")?.size;
     client.inCall = true;
     joinRoom(client, "main");
+    refreshYoutubeRemovalVotes();
     if (wasCallEmpty) {
       broadcastPresence({ type: "call-started", user: publicClient(client) }, client.id);
       sendCallStartedPush(client);
@@ -513,6 +516,7 @@ function handleMessage(client, message) {
   if (message.type === "leave") {
     client.inCall = false;
     leaveRoom(client);
+    refreshYoutubeRemovalVotes();
     broadcastPresence({ type: "presence-update", user: publicClient(client) });
     broadcastPresenceSync();
     return;
@@ -577,25 +581,18 @@ function handleMessage(client, message) {
   }
 
   if (message.type === "youtube-queue-remove") {
-    if (!client.account) return;
-    const index = youtubeRoom.queue.findIndex((item) => item.id === String(message.id || ""));
-    if (index < 0 || youtubeRoom.queue[index].addedBy !== client.account) {
-      send(client, { type: "youtube-error", message: "you can only remove videos you queued" });
+    if (!client.account || !client.inCall) {
+      send(client, { type: "youtube-error", message: "join the call to vote on queue removal" });
       return;
     }
-    const removingCurrent = index === youtubeRoom.currentIndex;
-    youtubeRoom.queue.splice(index, 1);
-    if (!youtubeRoom.queue.length) {
-      resetYouTubeRoom();
-    } else if (index < youtubeRoom.currentIndex) {
-      youtubeRoom.currentIndex -= 1;
-    } else if (removingCurrent) {
-      youtubeRoom.currentIndex = Math.min(index, youtubeRoom.queue.length - 1);
-      youtubeRoom.status = "paused";
-      youtubeRoom.position = 0;
-      youtubeRoom.updatedAt = Date.now();
-    }
-    bumpYouTubeRevision();
+    const index = youtubeRoom.queue.findIndex((item) => item.id === String(message.id || ""));
+    if (index < 0) return;
+    const item = youtubeRoom.queue[index];
+    const voters = youtubeRemoveVotes.get(item.id) || new Set();
+    voters.add(client.account);
+    youtubeRemoveVotes.set(item.id, voters);
+    if (youtubeRemovalApproved(item.id)) removeYoutubeQueueIndex(index);
+    else bumpYouTubeRevision();
     broadcastYouTubeState();
     return;
   }
@@ -1050,9 +1047,14 @@ function currentYouTubePosition() {
 
 function youtubeStateMessage() {
   const current = currentYouTubeItem();
+  const requiredVoters = inCallYoutubeAccounts();
   return {
     type: "youtube-state",
-    queue: youtubeRoom.queue,
+    queue: youtubeRoom.queue.map((item) => ({
+      ...item,
+      removeVotes: [...(youtubeRemoveVotes.get(item.id) || [])].filter((account) => requiredVoters.has(account)),
+      removeRequired: requiredVoters.size
+    })),
     currentIndex: youtubeRoom.currentIndex,
     currentId: current?.id || "",
     videoId: current?.videoId || "",
@@ -1075,6 +1077,7 @@ function broadcastYouTubeState() {
 
 function resetYouTubeRoom() {
   youtubeRoom.queue = [];
+  youtubeRemoveVotes.clear();
   youtubeRoom.currentIndex = -1;
   youtubeRoom.status = "paused";
   youtubeRoom.position = 0;
@@ -1085,12 +1088,83 @@ function advanceYouTubeQueue(keepPlaying) {
   if (youtubeRoom.currentIndex + 1 >= youtubeRoom.queue.length) {
     resetYouTubeRoom();
   } else {
+    const previous = youtubeRoom.queue[youtubeRoom.currentIndex];
+    if (previous) youtubeRemoveVotes.delete(previous.id);
     youtubeRoom.currentIndex += 1;
     youtubeRoom.status = keepPlaying ? "playing" : "paused";
     youtubeRoom.position = 0;
     youtubeRoom.updatedAt = Date.now();
   }
   bumpYouTubeRevision();
+}
+
+function inCallYoutubeAccounts() {
+  return new Set(
+    [...connectedSockets]
+      .filter((client) => client.account && client.inCall)
+      .map((client) => client.account)
+  );
+}
+
+function youtubeRemovalApproved(itemId) {
+  const required = inCallYoutubeAccounts();
+  if (!required.size) return false;
+  const votes = youtubeRemoveVotes.get(itemId) || new Set();
+  return [...required].every((account) => votes.has(account));
+}
+
+function removeYoutubeQueueIndex(index) {
+  const item = youtubeRoom.queue[index];
+  if (!item) return;
+  const removingCurrent = index === youtubeRoom.currentIndex;
+  const wasPlaying = youtubeRoom.status === "playing";
+  youtubeRemoveVotes.delete(item.id);
+  youtubeRoom.queue.splice(index, 1);
+  if (!youtubeRoom.queue.length) {
+    resetYouTubeRoom();
+  } else if (index < youtubeRoom.currentIndex) {
+    youtubeRoom.currentIndex -= 1;
+  } else if (removingCurrent) {
+    youtubeRoom.currentIndex = Math.min(index, youtubeRoom.queue.length - 1);
+    youtubeRoom.status = wasPlaying ? "playing" : "paused";
+    youtubeRoom.position = 0;
+    youtubeRoom.updatedAt = Date.now();
+  }
+  bumpYouTubeRevision();
+}
+
+function refreshYoutubeRemovalVotes() {
+  if (!youtubeRoom.queue.length) return;
+  const required = inCallYoutubeAccounts();
+  let changed = false;
+  const current = currentYouTubeItem();
+  if (current && youtubeRoom.status === "playing" && !required.has(current.addedBy)) {
+    youtubeRoom.position = currentYouTubePosition();
+    youtubeRoom.status = "paused";
+    youtubeRoom.updatedAt = Date.now();
+    changed = true;
+  }
+  for (const [itemId, votes] of youtubeRemoveVotes) {
+    for (const account of [...votes]) {
+      if (!required.has(account)) {
+        votes.delete(account);
+        changed = true;
+      }
+    }
+    if (!votes.size) youtubeRemoveVotes.delete(itemId);
+  }
+  for (let index = youtubeRoom.queue.length - 1; index >= 0; index -= 1) {
+    if (youtubeRemovalApproved(youtubeRoom.queue[index].id)) {
+      removeYoutubeQueueIndex(index);
+      changed = true;
+    }
+  }
+  if (changed) {
+    bumpYouTubeRevision();
+    broadcastYouTubeState();
+  } else {
+    broadcastYouTubeState();
+  }
 }
 
 function sendScreenRelayState(client) {
