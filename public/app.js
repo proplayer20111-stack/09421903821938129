@@ -2551,6 +2551,10 @@ function toggleYoutubePlayback() {
     }, 500);
   } else if (playing) {
     state.youtubePlayer?.pauseVideo?.();
+  } else if (state.deviceType === "mobile") {
+    state.youtubePlayer?.unMute?.();
+    state.youtubePlayer?.setVolume?.(100);
+    state.youtubePlayer?.playVideo?.();
   } else {
     state.youtubePlayer?.seekTo?.(position, true);
     state.youtubePlayer?.playVideo?.();
