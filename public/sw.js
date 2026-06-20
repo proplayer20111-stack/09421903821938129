@@ -3,12 +3,12 @@ self.addEventListener("push", (event) => {
   try {
     data = event.data?.json() || {};
   } catch {
-    data = { title: "Aba squads discord", body: event.data?.text() || "New call activity" };
+    data = { title: "Healthpack Squad", body: event.data?.text() || "New call activity" };
   }
 
-  event.waitUntil(self.registration.showNotification(data.title || "Aba squads discord", {
+  event.waitUntil(self.registration.showNotification(data.title || "Healthpack Squad", {
     body: data.body || "New call activity",
-    tag: data.tag || "aba-call",
+    tag: data.tag || "healthpack-call",
     renotify: true,
     icon: data.icon || "/icon.svg",
     badge: data.icon || "/icon.svg",

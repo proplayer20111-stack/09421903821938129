@@ -82,6 +82,9 @@ const MAX_SCREEN_RELAY_BACKLOG_BYTES = 512 * 1024;
 const MIN_SCREEN_RELAY_FRAME_INTERVAL_MS = 40;
 const MAX_YOUTUBE_QUEUE_ITEMS = 25;
 const MAX_YOUTUBE_POSITION_SECONDS = 12 * 60 * 60;
+const MAX_MEDIA_URL_LENGTH = 2048;
+const DIRECT_VIDEO_EXTENSIONS = new Set(["mp4", "webm", "ogv", "ogg", "mov", "m4v"]);
+const DIRECT_AUDIO_EXTENSIONS = new Set(["mp3", "wav", "m4a", "aac", "oga", "ogg", "flac"]);
 const SCREEN_SHARING_ENABLED = false;
 const MAX_ACCOUNTS = 5000;
 const MAX_PUSH_SUBSCRIPTIONS = 1000;
@@ -524,18 +527,18 @@ function handleMessage(client, message) {
 
   if (message.type === "youtube-queue-add") {
     if (!client.account) return;
-    const videoId = extractYouTubeVideoId(message.url || message.videoId);
-    if (!videoId) {
-      send(client, { type: "youtube-error", message: "enter a valid YouTube video link" });
+    const media = parseSharedMedia(message.url || message.videoId);
+    if (!media) {
+      send(client, { type: "youtube-error", message: "use a YouTube link or a direct video/audio file link" });
       return;
     }
     if (youtubeRoom.queue.length >= MAX_YOUTUBE_QUEUE_ITEMS) {
-      send(client, { type: "youtube-error", message: "the YouTube queue is full" });
+      send(client, { type: "youtube-error", message: "the media queue is full" });
       return;
     }
     youtubeRoom.queue.push({
       id: crypto.randomUUID(),
-      videoId,
+      ...media,
       addedBy: client.account,
       addedByName: client.profile?.name || client.name || client.account,
       addedAt: new Date().toISOString()
@@ -569,6 +572,18 @@ function handleMessage(client, message) {
           : message.playing === true ? "playing" : "paused";
       youtubeRoom.updatedAt = Date.now();
       bumpYouTubeRevision();
+      broadcastYouTubeState();
+      return;
+    }
+    if (action === "restart") {
+      youtubeRoom.position = 0;
+      youtubeRoom.updatedAt = Date.now();
+      bumpYouTubeRevision();
+      broadcastYouTubeState();
+      return;
+    }
+    if (action === "previous") {
+      moveYouTubeQueue(-1);
       broadcastYouTubeState();
       return;
     }
@@ -1036,6 +1051,39 @@ function extractYouTubeVideoId(input) {
   }
 }
 
+function parseSharedMedia(input) {
+  const value = String(input || "").trim();
+  if (!value || value.length > MAX_MEDIA_URL_LENGTH) return null;
+  const videoId = extractYouTubeVideoId(value);
+  if (videoId) {
+    return {
+      kind: "youtube",
+      videoId,
+      url: `https://www.youtube.com/watch?v=${videoId}`,
+      mediaType: "video",
+      title: `YouTube video ${videoId}`
+    };
+  }
+  try {
+    const url = new URL(value);
+    if (!["https:", "http:"].includes(url.protocol)) return null;
+    const filename = decodeURIComponent(url.pathname.split("/").filter(Boolean).pop() || "");
+    const extension = filename.toLowerCase().split(".").pop() || "";
+    const video = DIRECT_VIDEO_EXTENSIONS.has(extension);
+    const audio = DIRECT_AUDIO_EXTENSIONS.has(extension);
+    if (!video && !audio) return null;
+    return {
+      kind: "direct",
+      videoId: "",
+      url: url.href,
+      mediaType: video ? "video" : "audio",
+      title: filename || `${url.hostname} media`
+    };
+  } catch {
+    return null;
+  }
+}
+
 function normalizeYouTubePosition(value, fallback = 0) {
   const position = Number(value);
   if (!Number.isFinite(position)) return Math.max(0, Math.min(MAX_YOUTUBE_POSITION_SECONDS, Number(fallback) || 0));
@@ -1063,7 +1111,11 @@ function youtubeStateMessage() {
     })),
     currentIndex: youtubeRoom.currentIndex,
     currentId: current?.id || "",
+    kind: current?.kind || (current?.videoId ? "youtube" : ""),
     videoId: current?.videoId || "",
+    url: current?.url || "",
+    mediaType: current?.mediaType || "video",
+    title: current?.title || "",
     controller: current?.addedBy || "",
     controllerName: current?.addedByName || "",
     status: youtubeRoom.status,
@@ -1101,6 +1153,20 @@ function advanceYouTubeQueue(keepPlaying) {
     youtubeRoom.position = 0;
     youtubeRoom.updatedAt = Date.now();
   }
+  bumpYouTubeRevision();
+}
+
+function moveYouTubeQueue(direction) {
+  if (!youtubeRoom.queue.length) return;
+  const next = Math.max(0, Math.min(youtubeRoom.queue.length - 1, youtubeRoom.currentIndex + direction));
+  if (next === youtubeRoom.currentIndex) {
+    youtubeRoom.position = 0;
+  } else {
+    youtubeRoom.currentIndex = next;
+    youtubeRoom.position = 0;
+  }
+  youtubeRoom.status = "paused";
+  youtubeRoom.updatedAt = Date.now();
   bumpYouTubeRevision();
 }
 
@@ -1482,7 +1548,7 @@ function sendCallStartedPush(starter) {
   const payload = JSON.stringify({
     title,
     body,
-    tag: "aba-call-started",
+    tag: "healthpack-call-started",
     url: "/",
     icon: "/icon.svg"
   });

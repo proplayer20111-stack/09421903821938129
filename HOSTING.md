@@ -1,4 +1,4 @@
-# Hosting Aba Squads Discord
+# Hosting Healthpack Squad
 
 This app needs one Node server. Do not use a static-only host, because calls need WebSockets for live signaling.
 
@@ -125,7 +125,7 @@ storage, Neon, and connected browsers.
    should contain `-pooler`.
 6. Copy the entire connection string. It starts with `postgresql://` and ends
    with options such as `sslmode=require`. Treat this URL like a password.
-7. Open the Render dashboard and select the Aba Squads Discord web service.
+7. Open the Render dashboard and select the Healthpack Squad web service.
 8. Open **Environment**, then add:
    - Key: `DATABASE_URL`
    - Value: the complete pooled Neon connection string

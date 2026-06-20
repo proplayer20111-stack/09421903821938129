@@ -3,13 +3,13 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-    <title>Aba squads discord</title>
+    <title>Healthpack Squad</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
     <section class="screen" id="gateScreen">
       <div class="box auth-box">
-        <h1>Aba squads discord</h1>
+        <h1>Healthpack Squad</h1>
         <label>
           Site password
           <input id="sitePassword" type="password" maxlength="80" autocomplete="current-password" placeholder="password">
@@ -20,7 +20,7 @@
 
     <section class="screen" id="authScreen" hidden>
       <div class="box auth-box">
-        <h1>Aba squads discord</h1>
+        <h1>Healthpack Squad</h1>
         <div class="tabs">
           <button class="tab active" id="loginTab" type="button">Login</button>
           <button class="tab" id="signupTab" type="button">Sign up</button>
@@ -60,7 +60,7 @@
       <div class="box app-box">
         <div class="top">
           <div class="brand-block">
-            <h1>Aba squads discord</h1>
+            <h1>Healthpack Squad</h1>
             <div class="online-count" id="onlineCount">0 online</div>
           </div>
           <div class="top-actions">
@@ -112,27 +112,32 @@
             <section class="youtube-panel" id="youtubePanel" hidden>
               <div class="youtube-panel-head">
                 <div>
-                  <h2>YouTube</h2>
-                  <div class="youtube-owner" id="youtubeOwner">Queue a video to start</div>
+                  <h2>Watch Together</h2>
+                  <div class="youtube-owner" id="youtubeOwner">Queue media to start</div>
                 </div>
                 <div class="youtube-head-actions">
-                  <button class="youtube-fullscreen" id="youtubeFullscreenButton" type="button" aria-label="enter YouTube fullscreen" title="fullscreen">⛶</button>
+                  <button class="youtube-fullscreen" id="youtubeFullscreenButton" type="button" aria-label="enter media fullscreen" title="fullscreen">⛶</button>
                   <button class="small" id="youtubeCloseButton" type="button">close</button>
                 </div>
               </div>
               <form class="youtube-add" id="youtubeForm">
-                <input id="youtubeUrl" type="text" inputmode="url" autocomplete="off" placeholder="paste a YouTube link" aria-label="YouTube link">
+                <input id="youtubeUrl" type="text" inputmode="url" autocomplete="off" placeholder="YouTube, Catbox, video, or audio link" aria-label="media link">
                 <button class="blue small" type="submit">add to queue</button>
               </form>
+              <div class="youtube-supported">Supports YouTube and direct MP4, WebM, MP3, WAV, M4A, OGG, and Catbox file links.</div>
               <div class="youtube-stage" id="youtubeStage" hidden>
                 <div id="youtubePlayer"></div>
+                <video id="directMediaPlayer" controls playsinline preload="metadata" hidden></video>
                 <div class="youtube-player-lock" id="youtubePlayerLock" hidden>Only the person who queued this video controls the room</div>
               </div>
               <div class="youtube-controls" id="youtubeControls" hidden>
+                <button class="small" id="youtubePreviousButton" type="button">previous</button>
                 <button class="small" id="youtubePlayButton" type="button">play</button>
+                <button class="small" id="youtubeRestartButton" type="button">restart</button>
                 <input id="youtubeSeek" type="range" min="0" max="100" value="0" step="0.1" aria-label="video position">
                 <span id="youtubeTime">0:00 / 0:00</span>
                 <button class="small" id="youtubeNextButton" type="button">next</button>
+                <a class="small media-source-link" id="mediaSourceLink" href="#" target="_blank" rel="noopener noreferrer">open source</a>
               </div>
               <div class="youtube-empty" id="youtubeEmpty">Nothing queued yet.</div>
               <div class="youtube-queue" id="youtubeQueue"></div>
@@ -176,8 +181,8 @@
               <button class="small" id="muteButton" type="button" aria-pressed="false">mute</button>
               <button class="small" id="shareScreenButton" type="button" aria-pressed="false" hidden>share screen</button>
               <button class="small youtube-button" id="youtubeButton" type="button" aria-pressed="false">
-                youtube
-                <span class="youtube-live-dot" id="youtubeLiveDot" aria-label="YouTube queue active" hidden></span>
+                watch
+                <span class="youtube-live-dot" id="youtubeLiveDot" aria-label="media queue active" hidden></span>
               </button>
               <button class="red" id="leaveButton" type="button">leave</button>
             </div>
