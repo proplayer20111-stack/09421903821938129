@@ -582,11 +582,6 @@ function handleMessage(client, message) {
       broadcastYouTubeState();
       return;
     }
-    if (action === "previous") {
-      moveYouTubeQueue(-1);
-      broadcastYouTubeState();
-      return;
-    }
     if (action === "next" || action === "ended") {
       advanceYouTubeQueue(action === "ended");
       broadcastYouTubeState();
@@ -1153,20 +1148,6 @@ function advanceYouTubeQueue(keepPlaying) {
     youtubeRoom.position = 0;
     youtubeRoom.updatedAt = Date.now();
   }
-  bumpYouTubeRevision();
-}
-
-function moveYouTubeQueue(direction) {
-  if (!youtubeRoom.queue.length) return;
-  const next = Math.max(0, Math.min(youtubeRoom.queue.length - 1, youtubeRoom.currentIndex + direction));
-  if (next === youtubeRoom.currentIndex) {
-    youtubeRoom.position = 0;
-  } else {
-    youtubeRoom.currentIndex = next;
-    youtubeRoom.position = 0;
-  }
-  youtubeRoom.status = "paused";
-  youtubeRoom.updatedAt = Date.now();
   bumpYouTubeRevision();
 }
 

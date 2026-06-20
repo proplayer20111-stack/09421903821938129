@@ -31,13 +31,11 @@ const youtubePlayerLock = $("#youtubePlayerLock");
 const directMediaPlayer = $("#directMediaPlayer");
 const youtubeFullscreenButton = $("#youtubeFullscreenButton");
 const youtubeControls = $("#youtubeControls");
-const youtubePreviousButton = $("#youtubePreviousButton");
 const youtubePlayButton = $("#youtubePlayButton");
 const youtubeRestartButton = $("#youtubeRestartButton");
 const youtubeSeek = $("#youtubeSeek");
 const youtubeTime = $("#youtubeTime");
 const youtubeNextButton = $("#youtubeNextButton");
-const mediaSourceLink = $("#mediaSourceLink");
 const youtubeEmpty = $("#youtubeEmpty");
 const youtubeQueue = $("#youtubeQueue");
 const adminButton = $("#adminButton");
@@ -246,7 +244,6 @@ youtubeButton.addEventListener("click", toggleYoutubePanel);
 youtubeCloseButton.addEventListener("click", hideYoutubePanel);
 youtubeFullscreenButton.addEventListener("click", toggleYoutubeFullscreen);
 youtubeForm.addEventListener("submit", queueYoutubeVideo);
-youtubePreviousButton.addEventListener("click", playPreviousYoutubeVideo);
 youtubePlayButton.addEventListener("click", toggleYoutubePlayback);
 youtubeRestartButton.addEventListener("click", restartYoutubeVideo);
 youtubeNextButton.addEventListener("click", playNextYoutubeVideo);
@@ -2294,8 +2291,6 @@ function renderYoutubeRoom() {
       : `${state.youtube.controllerName || state.youtube.controller} controls this video`
     : "Queue a video to start";
   youtubePlayButton.textContent = state.youtube.status === "playing" ? "pause" : "play";
-  mediaSourceLink.hidden = !active || !state.youtube.url;
-  mediaSourceLink.href = state.youtube.url || "#";
 
   youtubeQueue.textContent = "";
   state.youtube.queue.forEach((item, index) => {
@@ -2598,11 +2593,6 @@ function playNextYoutubeVideo() {
     action: "next",
     position: currentSharedMediaTime()
   });
-}
-
-function playPreviousYoutubeVideo() {
-  if (!isYoutubeController()) return;
-  send({ type: "youtube-control", action: "previous", position: currentSharedMediaTime() });
 }
 
 function restartYoutubeVideo() {
