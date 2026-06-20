@@ -731,6 +731,13 @@ body[data-layout="mobile"] #shareScreenButton {
   text-align: center;
 }
 
+.media-source-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
 .youtube-queue-kind {
   display: inline-flex;
   margin-right: 5px;
