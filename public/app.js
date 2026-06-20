@@ -25,6 +25,7 @@ const youtubePanel = $("#youtubePanel");
 const youtubeCloseButton = $("#youtubeCloseButton");
 const youtubeForm = $("#youtubeForm");
 const youtubeUrl = $("#youtubeUrl");
+const youtubeAddButton = youtubeForm.querySelector('button[type="submit"]');
 const youtubeOwner = $("#youtubeOwner");
 const youtubeStage = $("#youtubeStage");
 const youtubePlayerLock = $("#youtubePlayerLock");
@@ -1369,7 +1370,20 @@ async function handleSignal(message) {
   }
 
   if (message.type === "youtube-error") {
+    youtubeUrl.disabled = false;
+    youtubeAddButton.disabled = false;
+    youtubeAddButton.textContent = "add to queue";
     showToast(message.message || "media sync failed");
+    youtubeOwner.textContent = message.message || "media link could not be added";
+    return;
+  }
+
+  if (message.type === "media-discovery") {
+    const checking = message.status === "checking";
+    youtubeUrl.disabled = checking;
+    youtubeAddButton.disabled = checking;
+    youtubeAddButton.textContent = checking ? "finding media..." : "add to queue";
+    if (checking) youtubeOwner.textContent = "Checking that page for playable media...";
     return;
   }
 
@@ -2243,6 +2257,9 @@ function queueYoutubeVideo(event) {
   }
   send({ type: "youtube-queue-add", url });
   youtubeUrl.value = "";
+  youtubeUrl.disabled = true;
+  youtubeAddButton.disabled = true;
+  youtubeAddButton.textContent = "finding media...";
 }
 
 async function applyYoutubeState(message) {

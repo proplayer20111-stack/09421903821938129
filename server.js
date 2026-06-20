@@ -3,6 +3,9 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const os = require("os");
+const dns = require("dns");
+const net = require("net");
+const https = require("https");
 let Pool = null;
 try {
   ({ Pool } = require("pg"));
@@ -49,6 +52,7 @@ const youtubeRoom = {
   revision: 0
 };
 const youtubeRemoveVotes = new Map();
+const mediaDiscoveryClients = new Set();
 const kickVotes = new Map();
 const callKicks = new Map();
 const voteKickCooldowns = new Map();
@@ -83,6 +87,9 @@ const MIN_SCREEN_RELAY_FRAME_INTERVAL_MS = 40;
 const MAX_YOUTUBE_QUEUE_ITEMS = 25;
 const MAX_YOUTUBE_POSITION_SECONDS = 12 * 60 * 60;
 const MAX_MEDIA_URL_LENGTH = 2048;
+const MAX_MEDIA_PAGE_BYTES = 512 * 1024;
+const MEDIA_DISCOVERY_TIMEOUT_MS = 8000;
+const MAX_MEDIA_REDIRECTS = 3;
 const DIRECT_VIDEO_EXTENSIONS = new Set(["mp4", "webm", "ogv", "ogg", "mov", "m4v"]);
 const DIRECT_AUDIO_EXTENSIONS = new Set(["mp3", "wav", "m4a", "aac", "oga", "ogg", "flac"]);
 const SCREEN_SHARING_ENABLED = false;
@@ -527,30 +534,7 @@ function handleMessage(client, message) {
 
   if (message.type === "youtube-queue-add") {
     if (!client.account) return;
-    const media = parseSharedMedia(message.url || message.videoId);
-    if (!media) {
-      send(client, { type: "youtube-error", message: "use a YouTube link or a direct video/audio file link" });
-      return;
-    }
-    if (youtubeRoom.queue.length >= MAX_YOUTUBE_QUEUE_ITEMS) {
-      send(client, { type: "youtube-error", message: "the media queue is full" });
-      return;
-    }
-    youtubeRoom.queue.push({
-      id: crypto.randomUUID(),
-      ...media,
-      addedBy: client.account,
-      addedByName: client.profile?.name || client.name || client.account,
-      addedAt: new Date().toISOString()
-    });
-    if (youtubeRoom.currentIndex < 0) {
-      youtubeRoom.currentIndex = 0;
-      youtubeRoom.status = "paused";
-      youtubeRoom.position = 0;
-      youtubeRoom.updatedAt = Date.now();
-    }
-    bumpYouTubeRevision();
-    broadcastYouTubeState();
+    queueSharedMedia(client, message.url || message.videoId);
     return;
   }
 
@@ -1077,6 +1061,290 @@ function parseSharedMedia(input) {
   } catch {
     return null;
   }
+}
+
+async function queueSharedMedia(client, input) {
+  if (mediaDiscoveryClients.has(client.id)) {
+    send(client, { type: "youtube-error", message: "already checking a media link" });
+    return;
+  }
+  if (youtubeRoom.queue.length >= MAX_YOUTUBE_QUEUE_ITEMS) {
+    send(client, { type: "youtube-error", message: "the media queue is full" });
+    return;
+  }
+  mediaDiscoveryClients.add(client.id);
+  send(client, { type: "media-discovery", status: "checking" });
+  try {
+    const media = parseSharedMedia(input) || await discoverSharedMedia(input);
+    if (!media) {
+      send(client, {
+        type: "youtube-error",
+        message: "no playable YouTube, video, or audio was found on that page"
+      });
+      return;
+    }
+    if (!client.account) return;
+    if (youtubeRoom.queue.length >= MAX_YOUTUBE_QUEUE_ITEMS) {
+      send(client, { type: "youtube-error", message: "the media queue became full" });
+      return;
+    }
+    youtubeRoom.queue.push({
+      id: crypto.randomUUID(),
+      ...media,
+      addedBy: client.account,
+      addedByName: client.profile?.name || client.name || client.account,
+      addedAt: new Date().toISOString()
+    });
+    if (youtubeRoom.currentIndex < 0) {
+      youtubeRoom.currentIndex = 0;
+      youtubeRoom.status = "paused";
+      youtubeRoom.position = 0;
+      youtubeRoom.updatedAt = Date.now();
+    }
+    bumpYouTubeRevision();
+    broadcastYouTubeState();
+    send(client, { type: "media-discovery", status: "found", title: media.title });
+  } catch (error) {
+    console.warn("Media discovery failed:", error?.message || error);
+    send(client, { type: "youtube-error", message: "that site could not be checked for playable media" });
+  } finally {
+    mediaDiscoveryClients.delete(client.id);
+  }
+}
+
+async function discoverSharedMedia(input, depth = 0, visited = new Set()) {
+  const pageUrl = normalizePublicUrl(input);
+  if (!pageUrl || depth > 2 || visited.has(pageUrl)) return null;
+  visited.add(pageUrl);
+  const page = await fetchPublicResource(pageUrl, MAX_MEDIA_PAGE_BYTES);
+  const contentType = String(page.headers["content-type"] || "").toLowerCase();
+  if (contentType.startsWith("video/") || contentType.startsWith("audio/")) {
+    return directMediaFromUrl(page.url, contentType, page.url);
+  }
+  if (!contentType.includes("html") && !contentType.includes("xhtml") && contentType) return null;
+  const html = page.body.toString("utf8");
+  const title = extractPageTitle(html) || new URL(page.url).hostname;
+  const candidates = extractMediaCandidates(html, page.url);
+  for (const candidate of candidates) {
+    const parsed = parseSharedMedia(candidate.url);
+    if (parsed) return { ...parsed, title: parsed.kind === "youtube" ? title : parsed.title || title };
+    const probed = await probeDirectMedia(candidate.url, title).catch(() => null);
+    if (probed) return probed;
+    if (candidate.embedded && depth < 2) {
+      const nested = await discoverSharedMedia(candidate.url, depth + 1, visited).catch(() => null);
+      if (nested) return nested;
+    }
+  }
+  return null;
+}
+
+function extractMediaCandidates(html, baseUrl) {
+  const found = [];
+  const add = (value, embedded = false) => {
+    const decoded = decodeHtmlAttribute(value);
+    if (!decoded) return;
+    try {
+      const url = new URL(decoded, baseUrl);
+      if (
+        ["http:", "https:"].includes(url.protocol)
+        && !found.some((item) => item.url === url.href)
+      ) {
+        found.push({ url: url.href, embedded });
+      }
+    } catch {
+    }
+  };
+  for (const tag of html.match(/<meta\b[^>]*>/gi) || []) {
+    const attrs = parseHtmlAttributes(tag);
+    const property = String(attrs.property || attrs.name || "").toLowerCase();
+    if ([
+      "og:video:secure_url", "og:video:url", "og:video",
+      "og:audio:secure_url", "og:audio:url", "og:audio",
+      "twitter:player:stream"
+    ].includes(property)) add(attrs.content);
+  }
+  for (const tag of html.match(/<(?:video|audio|source)\b[^>]*>/gi) || []) {
+    add(parseHtmlAttributes(tag).src);
+  }
+  for (const tag of html.match(/<(?:iframe|embed)\b[^>]*>/gi) || []) {
+    add(parseHtmlAttributes(tag).src, true);
+  }
+  for (const tag of html.match(/<object\b[^>]*>/gi) || []) {
+    add(parseHtmlAttributes(tag).data, true);
+  }
+  for (const match of html.matchAll(/https?:\\?\/\\?\/(?:www\.)?(?:youtube\.com|youtu\.be)\\?\/[^"'<>\\\s]+/gi)) {
+    add(match[0].replace(/\\\//g, "/"));
+  }
+  return found.slice(0, 12);
+}
+
+function parseHtmlAttributes(tag) {
+  const attributes = {};
+  const pattern = /([:\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g;
+  for (const match of tag.matchAll(pattern)) {
+    attributes[match[1].toLowerCase()] = match[2] ?? match[3] ?? match[4] ?? "";
+  }
+  return attributes;
+}
+
+function decodeHtmlAttribute(value) {
+  return String(value || "")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, "\"")
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&#x2f;/gi, "/")
+    .trim();
+}
+
+function extractPageTitle(html) {
+  for (const tag of html.match(/<meta\b[^>]*>/gi) || []) {
+    const attrs = parseHtmlAttributes(tag);
+    if (String(attrs.property || attrs.name || "").toLowerCase() === "og:title") {
+      return decodeHtmlAttribute(attrs.content).slice(0, 180);
+    }
+  }
+  const title = html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "";
+  return decodeHtmlAttribute(title.replace(/<[^>]+>/g, "")).slice(0, 180);
+}
+
+async function probeDirectMedia(input, title) {
+  const url = normalizePublicUrl(input);
+  if (!url) return null;
+  const response = await fetchPublicResource(url, 1, { range: true, headersOnly: true });
+  const contentType = String(response.headers["content-type"] || "").toLowerCase();
+  if (!contentType.startsWith("video/") && !contentType.startsWith("audio/")) return null;
+  return directMediaFromUrl(response.url, contentType, title);
+}
+
+function directMediaFromUrl(url, contentType, title) {
+  return {
+    kind: "direct",
+    videoId: "",
+    url,
+    mediaType: contentType.startsWith("audio/") ? "audio" : "video",
+    title: String(title || new URL(url).pathname.split("/").pop() || "Discovered media").slice(0, 180)
+  };
+}
+
+function normalizePublicUrl(input) {
+  try {
+    const url = new URL(String(input || "").trim());
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return null;
+    if (url.href.length > MAX_MEDIA_URL_LENGTH) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchPublicResource(input, maxBytes, options = {}, redirectCount = 0) {
+  if (redirectCount > MAX_MEDIA_REDIRECTS) throw new Error("too many redirects");
+  const url = new URL(input);
+  const addresses = await resolvePublicAddresses(url.hostname);
+  const transport = url.protocol === "https:" ? https : http;
+  return new Promise((resolve, reject) => {
+    const request = transport.request({
+      protocol: url.protocol,
+      hostname: url.hostname,
+      port: url.port || undefined,
+      path: `${url.pathname}${url.search}`,
+      method: "GET",
+      servername: url.hostname,
+      lookup: (_hostname, lookupOptions, callback) => {
+        if (lookupOptions?.all) {
+          callback(null, addresses);
+          return;
+        }
+        const address = addresses[0];
+        callback(null, address.address, address.family);
+      },
+      headers: {
+        "User-Agent": "Healthpack-Squad-Media-Discovery/1.0",
+        Accept: "text/html,application/xhtml+xml,video/*,audio/*;q=0.9,*/*;q=0.1",
+        "Accept-Encoding": "identity",
+        ...(options.range ? { Range: "bytes=0-0" } : {})
+      }
+    }, async (response) => {
+      const status = Number(response.statusCode || 0);
+      if ([301, 302, 303, 307, 308].includes(status) && response.headers.location) {
+        response.resume();
+        try {
+          const next = new URL(response.headers.location, url).href;
+          resolve(await fetchPublicResource(next, maxBytes, options, redirectCount + 1));
+        } catch (error) {
+          reject(error);
+        }
+        return;
+      }
+      if (status < 200 || status >= 400) {
+        response.resume();
+        reject(new Error(`remote status ${status}`));
+        return;
+      }
+      const contentType = String(response.headers["content-type"] || "").toLowerCase();
+      if (options.headersOnly || contentType.startsWith("video/") || contentType.startsWith("audio/")) {
+        response.destroy();
+        resolve({ url: url.href, headers: response.headers, body: Buffer.alloc(0) });
+        return;
+      }
+      const chunks = [];
+      let size = 0;
+      response.on("data", (chunk) => {
+        size += chunk.length;
+        if (size > maxBytes) {
+          request.destroy(new Error("remote page too large"));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      response.on("end", () => resolve({
+        url: url.href,
+        headers: response.headers,
+        body: Buffer.concat(chunks)
+      }));
+      response.on("error", reject);
+    });
+    request.setTimeout(MEDIA_DISCOVERY_TIMEOUT_MS, () => request.destroy(new Error("remote timeout")));
+    request.on("error", reject);
+    request.end();
+  });
+}
+
+async function resolvePublicAddresses(hostname) {
+  const lowered = String(hostname || "").toLowerCase();
+  if (!lowered || lowered === "localhost" || lowered.endsWith(".localhost") || lowered.endsWith(".local")) {
+    throw new Error("private host");
+  }
+  const addresses = net.isIP(lowered)
+    ? [{ address: lowered, family: net.isIP(lowered) }]
+    : await dns.promises.lookup(lowered, { all: true, verbatim: true });
+  if (!addresses.length || addresses.some(({ address }) => isPrivateAddress(address))) {
+    throw new Error("private address");
+  }
+  return addresses;
+}
+
+function isPrivateAddress(address) {
+  const value = String(address || "").toLowerCase().replace(/^::ffff:/, "");
+  if (net.isIPv4(value)) {
+    const parts = value.split(".").map(Number);
+    return parts[0] === 10
+      || parts[0] === 127
+      || parts[0] === 0
+      || (parts[0] === 169 && parts[1] === 254)
+      || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31)
+      || (parts[0] === 192 && parts[1] === 168)
+      || (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127)
+      || parts[0] >= 224;
+  }
+  return value === "::1"
+    || value === "::"
+    || value.startsWith("fc")
+    || value.startsWith("fd")
+    || value.startsWith("fe8")
+    || value.startsWith("fe9")
+    || value.startsWith("fea")
+    || value.startsWith("feb");
 }
 
 function normalizeYouTubePosition(value, fallback = 0) {
