@@ -1,10 +1,9 @@
 services:
   - type: web
     name: callroom
-    runtime: node
+    runtime: docker
     plan: free
-    buildCommand: "npm install"
-    startCommand: "npm start"
+    dockerfilePath: ./Dockerfile
     healthCheckPath: "/healthz"
     autoDeploy: true
     envVars:
@@ -12,9 +11,5 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
-      - key: AZURE_SPEECH_KEY
-        sync: false
-      - key: AZURE_SPEECH_REGION
-        sync: false
-      - key: AZURE_SPEECH_VOICE
-        value: en-US-AriaNeural
+      - key: PIPER_IDLE_MS
+        value: "90000"

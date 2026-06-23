@@ -47,9 +47,8 @@ If Git asks you to sign in, follow the browser sign-in prompt.
 4. Connect your GitHub account if it asks.
 5. Pick the repo you just made.
 6. Use these settings if Render asks:
-   - Runtime: `Node`
-   - Build command: `npm install`
-   - Start command: `npm start`
+   - Runtime: `Docker`
+   - Dockerfile: `./Dockerfile`
    - Health check path: `/healthz`
    - Plan: `Free`
 7. Add an environment variable:
@@ -57,12 +56,6 @@ If Git asks you to sign in, follow the browser sign-in prompt.
    - Value: your private site password
    - Optional key: `GIPHY_API_KEY`
    - Optional value: a GIPHY developer API key, only needed for live GIF search
-   - Optional key: `AZURE_SPEECH_KEY`
-   - Optional value: the key from an Azure Speech resource
-   - Optional key: `AZURE_SPEECH_REGION`
-   - Optional value: the resource region, such as `eastus`
-   - Optional key: `AZURE_SPEECH_VOICE`
-   - Optional value: an Azure voice such as `en-US-AriaNeural`
 8. Click deploy.
 9. Wait until Render says the service is live.
 10. If you add or change `GIPHY_API_KEY` later, redeploy or restart the Render service so Node sees the new value.
@@ -81,6 +74,13 @@ Use that URL on both PC and phone. Phone mic should work better there because it
 ## Important
 
 - Free Render services can sleep. First load may take a bit.
+- Text to speech uses the free, self-hosted Piper engine. Docker installs one
+  63 MB U.S. English low-memory voice during deployment, so no speech API key
+  or per-character payment is required.
+- Piper starts only when TTS is used, processes one sentence at a time, allows
+  at most one waiting sentence, and unloads after 90 seconds idle. This keeps
+  the 512 MB service from holding the voice model in RAM all day. The first
+  sentence after idle can take longer while the model loads.
 - Accounts are stored in JSON files. On free hosting, data may reset after redeploys or server resets unless you add persistent storage.
 - Live GIF search needs `GIPHY_API_KEY`; without it, the GIF panel shows that GIPHY is not active yet.
 - Mobile call notifications require HTTPS, notification permission, service worker support, and browser Web Push support. After a redeploy, open the site once so the phone can register.

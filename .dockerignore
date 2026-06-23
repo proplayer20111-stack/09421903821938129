@@ -1,0 +1,9 @@
+.git
+.gitignore
+.env
+node_modules
+accounts.json
+device-rules.json
+chat-messages.json
+chat-settings.json
+*.log
