@@ -150,7 +150,13 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && url.pathname === "/healthz") {
-    sendJson(res, 200, { ok: true });
+    sendJson(res, 200, {
+      ok: true,
+      tts: {
+        installed: fs.existsSync(PIPER_MODEL_PATH) && fs.existsSync(PIPER_WORKER_PATH),
+        workerRunning: Boolean(ttsWorker?.ready && !ttsWorker.killed)
+      }
+    });
     return;
   }
 
