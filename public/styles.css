@@ -1007,39 +1007,6 @@ body[data-layout="mobile"] #shareScreenButton {
   width: 100%;
   padding: 12px;
   border-radius: var(--radius-md);
-  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
-}
-
-.chat-panel.tts-mode {
-  opacity: 1;
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--soft) 70%, var(--panel));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent), var(--shadow-soft);
-}
-
-.chat-panel.tts-mode h2 {
-  color: var(--accent);
-}
-
-.chat-panel.tts-mode .chat-form {
-  position: relative;
-  padding-top: 25px;
-}
-
-.chat-panel.tts-mode .chat-form::before {
-  content: "muted \2022  sends as voice";
-  position: absolute;
-  top: 0;
-  left: 4px;
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: bold;
-  letter-spacing: 0.01em;
-}
-
-.chat-panel.tts-mode #chatInput {
-  border-color: var(--accent);
-  background: var(--panel-strong);
 }
 
 .chat-log {
@@ -1238,6 +1205,67 @@ body[data-layout="mobile"] #shareScreenButton {
   justify-content: center;
 }
 
+.tts-panel {
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--soft) 64%, var(--panel));
+  padding: 14px;
+  margin-top: 12px;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-soft);
+  animation: panel-in 170ms ease-out;
+}
+
+.tts-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.tts-heading h2 {
+  margin: 0 0 3px;
+  color: var(--accent);
+  font-size: 18px;
+}
+
+.tts-note {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.tts-live {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--accent-fill);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 13%, transparent);
+}
+
+.tts-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.tts-form input {
+  width: 100%;
+  min-width: 0;
+  border-color: var(--line);
+}
+
+.tts-panel.is-loading .tts-live,
+.tts-panel.is-speaking .tts-live {
+  animation: tts-pulse 900ms ease-in-out infinite alternate;
+}
+
+.tts-panel.is-speaking {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent), var(--shadow-soft);
+}
+
 .volume-backdrop {
   position: fixed;
   inset: 0;
@@ -1391,6 +1419,18 @@ body[data-layout="mobile"] #shareScreenButton {
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes tts-pulse {
+  from {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1.15);
   }
 }
 
@@ -1639,6 +1679,14 @@ body[data-layout="mobile"] #shareScreenButton {
     width: 100%;
     min-width: 0;
     overflow: hidden;
+  }
+
+  .tts-form {
+    grid-template-columns: 1fr;
+  }
+
+  .tts-form button {
+    width: 100%;
   }
 
   .profile-row > .avatar {
