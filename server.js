@@ -108,6 +108,7 @@ const MAX_TTS_AUDIO_BYTES = 1024 * 1024;
 const MAX_TTS_QUEUED_JOBS = 2;
 const TTS_COOLDOWN_MS = 700;
 const TTS_SYNTHESIS_TIMEOUT_MS = 20 * 1000;
+const TTS_SYNC_LEAD_MS = 900;
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const AUTH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const PUSH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -473,7 +474,7 @@ function handleMessage(client, message) {
   client.lastSeen = Date.now();
 
   if (message.type === "ping") {
-    send(client, { type: "pong", time: client.lastSeen });
+    send(client, { type: "pong", time: client.lastSeen, clientTime: Number(message.clientTime) || 0 });
     return;
   }
 
@@ -1840,7 +1841,6 @@ async function handleTextToSpeech(req, res) {
   }
 
   const text = String(body.text || "").replace(/\s+/g, " ").trim().slice(0, MAX_TTS_TEXT_LENGTH);
-  const testOnly = body.testOnly === true;
   if (!text) {
     sendJson(res, 400, { error: "type something to speak" });
     return;
@@ -1866,21 +1866,25 @@ async function handleTextToSpeech(req, res) {
       throw new Error("speech service returned an invalid audio response");
     }
 
-    if (!testOnly) {
-      broadcast(client.room, {
-        type: "tts-audio",
-        from: client.id,
-        name: client.name,
-        profile: client.profile,
-        audio: audio.toString("base64"),
-        mimeType: "audio/mpeg"
-      }, client.id);
-    }
+    const serverTime = Date.now();
+    const playAt = serverTime + TTS_SYNC_LEAD_MS;
+    broadcast(client.room, {
+      type: "tts-audio",
+      from: client.id,
+      name: client.name,
+      profile: client.profile,
+      audio: audio.toString("base64"),
+      mimeType: "audio/mpeg",
+      serverTime,
+      playAt
+    }, client.id);
 
     res.writeHead(200, {
       "Content-Type": "audio/mpeg",
       "Content-Length": audio.length,
-      "Cache-Control": "no-store"
+      "Cache-Control": "no-store",
+      "X-TTS-Server-Time": String(serverTime),
+      "X-TTS-Play-At": String(playAt)
     });
     res.end(audio);
   } catch (error) {

@@ -69,8 +69,6 @@ const ttsPanel = $("#ttsPanel");
 const ttsForm = $("#ttsForm");
 const ttsInput = $("#ttsInput");
 const ttsButton = $("#ttsButton");
-const ttsTestButton = $("#ttsTestButton");
-const ttsTestStatus = $("#ttsTestStatus");
 const chatLog = $("#chatLog");
 const chatPanel = document.querySelector(".chat-panel");
 const chatForm = $("#chatForm");
@@ -181,8 +179,11 @@ const state = {
   ttsAudioQueue: [],
   ttsAudioPlaying: false,
   ttsAudioSource: null,
+  ttsStartTimer: null,
   ttsLoading: false,
   ttsSpeakerId: null,
+  serverClockOffset: 0,
+  hasServerClockOffset: false,
   hasMic: false,
   lastSpeaking: false,
   lastSpeakingSentAt: 0,
@@ -320,7 +321,6 @@ securityList.addEventListener("click", (event) => {
 });
 chatForm.addEventListener("submit", sendChat);
 ttsForm.addEventListener("submit", submitTextToSpeech);
-ttsTestButton.addEventListener("click", testTextToSpeech);
 mediaButton.addEventListener("click", () => mediaFile.click());
 mediaFile.addEventListener("change", uploadChatMedia);
 gifButton.addEventListener("click", toggleGifPanel);
@@ -774,6 +774,7 @@ function connectPresence() {
     state.reconnectAttempt = 0;
     state.lastPongAt = Date.now();
     send({ type: "presence", token: state.token, siteToken: state.siteToken, deviceId: state.deviceId, deviceType: state.deviceType });
+    sendClockPing();
     startHeartbeat();
   });
 
@@ -822,7 +823,7 @@ function startHeartbeat() {
       state.ws.close();
       return;
     }
-    send({ type: "ping" });
+    sendClockPing();
   }, 10000);
 }
 
@@ -1535,7 +1536,14 @@ async function handleSignal(message) {
   }
 
   if (message.type === "pong") {
-    state.lastPongAt = Date.now();
+    const receivedAt = Date.now();
+    state.lastPongAt = receivedAt;
+    const sentAt = Number(message.clientTime);
+    const serverTime = Number(message.time);
+    if (Number.isFinite(sentAt) && Number.isFinite(serverTime)) {
+      state.serverClockOffset = serverTime - ((sentAt + receivedAt) / 2);
+      state.hasServerClockOffset = true;
+    }
     return;
   }
 
@@ -1635,7 +1643,10 @@ async function handleSignal(message) {
 
   if (message.type === "tts-audio") {
     try {
-      queueTtsAudio(base64ToArrayBuffer(message.audio), message.from);
+      queueTtsAudio(base64ToArrayBuffer(message.audio), message.from, {
+        playAt: Number(message.playAt),
+        serverTime: Number(message.serverTime)
+      });
     } catch {
       showToast("could not play text to speech");
     }
@@ -3944,9 +3955,9 @@ async function submitTextToSpeech(event) {
   state.ttsLoading = true;
   updateTtsPanel();
   try {
-    const audio = await requestTextToSpeech(text);
+    const speech = await requestTextToSpeech(text);
     ttsInput.value = "";
-    queueTtsAudio(audio, state.id);
+    queueTtsAudio(speech.audio, state.id, speech);
   } catch (error) {
     showToast(error.message || "text to speech failed");
   } finally {
@@ -3955,49 +3966,21 @@ async function submitTextToSpeech(event) {
   }
 }
 
-async function testTextToSpeech() {
-  if (state.ttsLoading) return;
-  if (!state.inCall || !state.muted) {
-    showToast("mute first to test text to speech");
-    return;
-  }
-
-  unlockTtsAudio();
-  state.ttsLoading = true;
-  ttsTestStatus.textContent = "requesting test voice...";
-  updateTtsPanel();
-  try {
-    const audio = await requestTextToSpeech("Text to speech is working.", true);
-    ttsTestStatus.textContent = "voice received — playing now";
-    queueTtsAudio(audio, state.id, {
-      onEnd: () => {
-        ttsTestStatus.textContent = "test finished";
-      },
-      onError: () => {
-        ttsTestStatus.textContent = "audio received but playback failed";
-      }
-    });
-  } catch (error) {
-    const message = error.message || "text to speech test failed";
-    ttsTestStatus.textContent = message;
-    showToast(message);
-  } finally {
-    state.ttsLoading = false;
-    updateTtsPanel();
-  }
-}
-
-async function requestTextToSpeech(text, testOnly = false) {
+async function requestTextToSpeech(text) {
   const response = await fetch("/api/tts", {
     method: "POST",
     headers: authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ text, clientId: state.id, testOnly })
+    body: JSON.stringify({ text, clientId: state.id })
   });
   if (!response.ok) {
     const result = await response.json().catch(() => ({}));
     throw new Error(result.error || "text to speech failed");
   }
-  return response.arrayBuffer();
+  return {
+    audio: await response.arrayBuffer(),
+    playAt: Number(response.headers.get("X-TTS-Play-At")),
+    serverTime: Number(response.headers.get("X-TTS-Server-Time"))
+  };
 }
 
 function updateTtsPanel() {
@@ -4005,7 +3988,6 @@ function updateTtsPanel() {
   ttsPanel.hidden = !available;
   ttsInput.disabled = !available;
   ttsButton.disabled = !available || state.ttsLoading;
-  ttsTestButton.disabled = !available || state.ttsLoading;
 }
 
 function unlockTtsAudio() {
@@ -4023,10 +4005,15 @@ function unlockTtsAudio() {
   }).catch(() => {});
 }
 
-function queueTtsAudio(audio, speakerId, callbacks = {}) {
+function queueTtsAudio(audio, speakerId, timing = {}) {
   if (!(audio instanceof ArrayBuffer) || !audio.byteLength) return;
   unlockTtsAudio();
-  state.ttsAudioQueue.push({ audio, speakerId, callbacks });
+  state.ttsAudioQueue.push({
+    audio,
+    speakerId,
+    playAt: Number(timing.playAt),
+    serverTime: Number(timing.serverTime)
+  });
   playNextTtsAudio();
 }
 
@@ -4050,23 +4037,30 @@ async function playNextTtsAudio() {
     source.connect(context.destination);
     state.ttsAudioSource = source;
     state.ttsSpeakerId = next.speakerId;
-    setSpeaking(next.speakerId, true);
-    next.callbacks.onStart?.();
+    const startDelayMs = getTtsStartDelay(next);
+    const startAt = context.currentTime + (startDelayMs / 1000);
+    clearTimeout(state.ttsStartTimer);
+    state.ttsStartTimer = setTimeout(() => {
+      state.ttsStartTimer = null;
+      setSpeaking(next.speakerId, true);
+    }, startDelayMs);
     source.addEventListener("ended", () => {
+      clearTimeout(state.ttsStartTimer);
+      state.ttsStartTimer = null;
       setSpeaking(next.speakerId, false);
       if (state.ttsSpeakerId === next.speakerId) state.ttsSpeakerId = null;
       if (state.ttsAudioSource === source) state.ttsAudioSource = null;
       state.ttsAudioPlaying = false;
       source.disconnect();
-      next.callbacks.onEnd?.();
       playNextTtsAudio();
     }, { once: true });
-    source.start();
+    source.start(startAt);
   } catch {
+    clearTimeout(state.ttsStartTimer);
+    state.ttsStartTimer = null;
     setSpeaking(next.speakerId, false);
     state.ttsAudioPlaying = false;
     state.ttsAudioSource = null;
-    next.callbacks.onError?.();
     showToast("could not play text to speech audio");
     playNextTtsAudio();
   }
@@ -4074,6 +4068,8 @@ async function playNextTtsAudio() {
 
 function stopTtsAudio() {
   state.ttsAudioQueue.length = 0;
+  clearTimeout(state.ttsStartTimer);
+  state.ttsStartTimer = null;
   if (state.ttsAudioSource) {
     try {
       state.ttsAudioSource.stop();
@@ -4082,6 +4078,21 @@ function stopTtsAudio() {
   }
   state.ttsAudioSource = null;
   state.ttsAudioPlaying = false;
+}
+
+function getTtsStartDelay(item) {
+  if (!Number.isFinite(item.playAt)) return 0;
+  if (state.hasServerClockOffset) {
+    return Math.max(0, item.playAt - state.serverClockOffset - Date.now());
+  }
+  if (Number.isFinite(item.serverTime)) {
+    return Math.max(0, item.playAt - item.serverTime);
+  }
+  return 0;
+}
+
+function sendClockPing() {
+  send({ type: "ping", clientTime: Date.now() });
 }
 
 function base64ToArrayBuffer(value) {

@@ -1233,18 +1233,6 @@ body[data-layout="mobile"] #shareScreenButton {
   border-color: var(--line);
 }
 
-.tts-test {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 10px;
-}
-
-.tts-test span {
-  color: var(--muted);
-  font-size: 12px;
-}
-
 .volume-backdrop {
   position: fixed;
   inset: 0;
@@ -1653,16 +1641,6 @@ body[data-layout="mobile"] #shareScreenButton {
   }
 
   .tts-form button {
-    width: 100%;
-  }
-
-  .tts-test {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .tts-test button {
     width: 100%;
   }
 
