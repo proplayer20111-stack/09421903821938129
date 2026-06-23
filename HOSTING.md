@@ -47,8 +47,9 @@ If Git asks you to sign in, follow the browser sign-in prompt.
 4. Connect your GitHub account if it asks.
 5. Pick the repo you just made.
 6. Use these settings if Render asks:
-   - Runtime: `Docker`
-   - Dockerfile: `./Dockerfile`
+   - Runtime: `Node`
+   - Build command: `npm ci --omit=dev`
+   - Start command: `npm start`
    - Health check path: `/healthz`
    - Plan: `Free`
 7. Add an environment variable:
@@ -74,13 +75,11 @@ Use that URL on both PC and phone. Phone mic should work better there because it
 ## Important
 
 - Free Render services can sleep. First load may take a bit.
-- Text to speech uses the free, self-hosted Piper engine. Docker installs one
-  63 MB U.S. English low-memory voice during deployment, so no speech API key
-  or per-character payment is required.
-- Piper starts only when TTS is used, processes one sentence at a time, allows
-  at most one waiting sentence, and unloads after 90 seconds idle. This keeps
-  the 512 MB service from holding the voice model in RAM all day. The first
-  sentence after idle can take longer while the model loads.
+- Text to speech uses Microsoft Edge's online speech service through the
+  server. Phones and PCs receive the same MP3 audio without a speech API key
+  or a large voice model in the Render instance.
+- The server allows at most two active or queued speech requests and limits
+  each message to 280 characters to keep memory use low.
 - Accounts are stored in JSON files. On free hosting, data may reset after redeploys or server resets unless you add persistent storage.
 - Live GIF search needs `GIPHY_API_KEY`; without it, the GIF panel shows that GIPHY is not active yet.
 - Mobile call notifications require HTTPS, notification permission, service worker support, and browser Web Push support. After a redeploy, open the site once so the phone can register.

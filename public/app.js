@@ -70,6 +70,7 @@ const ttsForm = $("#ttsForm");
 const ttsInput = $("#ttsInput");
 const ttsButton = $("#ttsButton");
 const ttsTestButton = $("#ttsTestButton");
+const ttsTestStatus = $("#ttsTestStatus");
 const chatLog = $("#chatLog");
 const chatPanel = document.querySelector(".chat-panel");
 const chatForm = $("#chatForm");
@@ -3963,12 +3964,23 @@ async function testTextToSpeech() {
 
   unlockTtsAudio();
   state.ttsLoading = true;
+  ttsTestStatus.textContent = "requesting test voice...";
   updateTtsPanel();
   try {
     const audio = await requestTextToSpeech("Text to speech is working.", true);
-    queueTtsAudio(audio, state.id);
+    ttsTestStatus.textContent = "voice received — playing now";
+    queueTtsAudio(audio, state.id, {
+      onEnd: () => {
+        ttsTestStatus.textContent = "test finished";
+      },
+      onError: () => {
+        ttsTestStatus.textContent = "audio received but playback failed";
+      }
+    });
   } catch (error) {
-    showToast(error.message || "text to speech test failed");
+    const message = error.message || "text to speech test failed";
+    ttsTestStatus.textContent = message;
+    showToast(message);
   } finally {
     state.ttsLoading = false;
     updateTtsPanel();
@@ -4002,13 +4014,19 @@ function unlockTtsAudio() {
   if (!state.ttsAudioContext || state.ttsAudioContext.state === "closed") {
     state.ttsAudioContext = new AudioContextClass();
   }
-  state.ttsAudioContext.resume().catch(() => {});
+  const context = state.ttsAudioContext;
+  context.resume().then(() => {
+    const source = context.createBufferSource();
+    source.buffer = context.createBuffer(1, 1, 22050);
+    source.connect(context.destination);
+    source.start();
+  }).catch(() => {});
 }
 
-function queueTtsAudio(audio, speakerId) {
+function queueTtsAudio(audio, speakerId, callbacks = {}) {
   if (!(audio instanceof ArrayBuffer) || !audio.byteLength) return;
   unlockTtsAudio();
-  state.ttsAudioQueue.push({ audio, speakerId });
+  state.ttsAudioQueue.push({ audio, speakerId, callbacks });
   playNextTtsAudio();
 }
 
@@ -4033,12 +4051,14 @@ async function playNextTtsAudio() {
     state.ttsAudioSource = source;
     state.ttsSpeakerId = next.speakerId;
     setSpeaking(next.speakerId, true);
+    next.callbacks.onStart?.();
     source.addEventListener("ended", () => {
       setSpeaking(next.speakerId, false);
       if (state.ttsSpeakerId === next.speakerId) state.ttsSpeakerId = null;
       if (state.ttsAudioSource === source) state.ttsAudioSource = null;
       state.ttsAudioPlaying = false;
       source.disconnect();
+      next.callbacks.onEnd?.();
       playNextTtsAudio();
     }, { once: true });
     source.start();
@@ -4046,6 +4066,7 @@ async function playNextTtsAudio() {
     setSpeaking(next.speakerId, false);
     state.ttsAudioPlaying = false;
     state.ttsAudioSource = null;
+    next.callbacks.onError?.();
     showToast("could not play text to speech audio");
     playNextTtsAudio();
   }

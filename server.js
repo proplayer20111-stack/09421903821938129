@@ -6,7 +6,12 @@ const os = require("os");
 const dns = require("dns");
 const net = require("net");
 const https = require("https");
-const { spawn } = require("child_process");
+let EdgeTTS = null;
+try {
+  ({ EdgeTTS } = require("edge-tts-universal"));
+} catch {
+  EdgeTTS = null;
+}
 let Pool = null;
 try {
   ({ Pool } = require("pg"));
@@ -59,7 +64,6 @@ const callKicks = new Map();
 const voteKickCooldowns = new Map();
 const pushSubscriptions = new Map();
 const ttsCooldowns = new Map();
-const ttsWorkerRequests = new Map();
 let accounts = loadAccounts();
 let databasePool = null;
 let databaseSaveChain = Promise.resolve();
@@ -68,9 +72,6 @@ const databasePendingValues = new Map();
 let chatSaveTimer = null;
 let activeUploads = 0;
 let activeTtsJobs = 0;
-let ttsWorker = null;
-let ttsWorkerReadyPromise = null;
-let ttsWorkerIdleTimer = null;
 
 const SITE_PASSWORD = process.env.SITE_PASSWORD || "Seth123";
 const SITE_TOKEN = crypto.createHash("sha256").update(`site:${SITE_PASSWORD}`).digest("hex");
@@ -106,19 +107,14 @@ const MAX_TTS_TEXT_LENGTH = 280;
 const MAX_TTS_AUDIO_BYTES = 1024 * 1024;
 const MAX_TTS_QUEUED_JOBS = 2;
 const TTS_COOLDOWN_MS = 700;
-const TTS_WORKER_IDLE_MS = Math.max(30 * 1000, Number(process.env.PIPER_IDLE_MS) || 90 * 1000);
-const TTS_WORKER_START_TIMEOUT_MS = 30 * 1000;
 const TTS_SYNTHESIS_TIMEOUT_MS = 20 * 1000;
-const TTS_WORKER_MAX_RSS_BYTES = 275 * 1024 * 1024;
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const AUTH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const PUSH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MEMORY_SOFT_RSS_BYTES = 350 * 1024 * 1024;
 const MEMORY_HARD_RSS_BYTES = 425 * 1024 * 1024;
 const GIPHY_API_KEY = process.env.GIPHY_API_KEY || "";
-const PIPER_PYTHON = String(process.env.PIPER_PYTHON || (process.platform === "win32" ? "python" : "/opt/piper-venv/bin/python")).trim();
-const PIPER_MODEL_PATH = path.resolve(process.env.PIPER_MODEL_PATH || path.join(__dirname, "piper-data", "en_US-lessac-low.onnx"));
-const PIPER_WORKER_PATH = path.join(__dirname, "scripts", "piper_worker.py");
+const TTS_VOICE = String(process.env.TTS_VOICE || "en-US-EmmaMultilingualNeural").trim();
 const TURN_URL = String(process.env.TURN_URL || "").trim();
 const TURN_USERNAME = String(process.env.TURN_USERNAME || "").trim();
 const TURN_CREDENTIAL = String(process.env.TURN_CREDENTIAL || "").trim();
@@ -153,8 +149,9 @@ const server = http.createServer(async (req, res) => {
     sendJson(res, 200, {
       ok: true,
       tts: {
-        installed: fs.existsSync(PIPER_MODEL_PATH) && fs.existsSync(PIPER_WORKER_PATH),
-        workerRunning: Boolean(ttsWorker?.ready && !ttsWorker.killed)
+        installed: Boolean(EdgeTTS),
+        provider: "edge-online",
+        activeJobs: activeTtsJobs
       }
     });
     return;
@@ -296,7 +293,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/api/tts") {
     if (!requireSiteAccess(req, res)) return;
-    await handlePiperTextToSpeech(req, res);
+    await handleTextToSpeech(req, res);
     return;
   }
 
@@ -1820,10 +1817,10 @@ async function handlePushSubscribe(req, res) {
   }
 }
 
-async function handlePiperTextToSpeech(req, res) {
+async function handleTextToSpeech(req, res) {
   const auth = requireAccount(req, res);
   if (!auth) return;
-  if (!fs.existsSync(PIPER_MODEL_PATH) || !fs.existsSync(PIPER_WORKER_PATH)) {
+  if (!EdgeTTS) {
     sendJson(res, 503, { error: "text to speech is not installed on this server" });
     return;
   }
@@ -1864,9 +1861,9 @@ async function handlePiperTextToSpeech(req, res) {
 
   activeTtsJobs += 1;
   try {
-    const audio = await synthesizePiperSpeech(text);
+    const audio = await synthesizeEdgeSpeech(text);
     if (!audio.length || audio.length > MAX_TTS_AUDIO_BYTES) {
-      throw new Error("Piper returned an invalid audio response");
+      throw new Error("speech service returned an invalid audio response");
     }
 
     if (!testOnly) {
@@ -1876,198 +1873,38 @@ async function handlePiperTextToSpeech(req, res) {
         name: client.name,
         profile: client.profile,
         audio: audio.toString("base64"),
-        mimeType: "audio/wav"
+        mimeType: "audio/mpeg"
       }, client.id);
     }
 
     res.writeHead(200, {
-      "Content-Type": "audio/wav",
+      "Content-Type": "audio/mpeg",
       "Content-Length": audio.length,
       "Cache-Control": "no-store"
     });
     res.end(audio);
   } catch (error) {
-    console.warn("Piper text-to-speech failed:", error?.message || error);
-    sendJson(res, 503, { error: "text to speech could not create the voice" });
+    console.warn("Online text-to-speech failed:", error?.message || error);
+    sendJson(res, 503, { error: "text to speech service is temporarily unavailable" });
   } finally {
     activeTtsJobs = Math.max(0, activeTtsJobs - 1);
-    scheduleTtsWorkerIdleShutdown();
   }
 }
 
-async function synthesizePiperSpeech(text) {
-  await ensureTtsWorker();
-  const worker = ttsWorker;
-  if (!worker?.ready || worker.killed) throw new Error("Piper worker is unavailable");
-  const id = crypto.randomUUID();
-  const outputPath = path.join(os.tmpdir(), `callroom-tts-${id}.wav`);
-
+async function synthesizeEdgeSpeech(text) {
+  const synthesis = new EdgeTTS(text, TTS_VOICE).synthesize();
+  let timeout;
   try {
-    await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        ttsWorkerRequests.delete(id);
-        stopTtsWorker("synthesis timeout");
-        reject(new Error("Piper speech timed out"));
-      }, TTS_SYNTHESIS_TIMEOUT_MS);
-      timeout.unref();
-
-      ttsWorkerRequests.set(id, {
-        worker,
-        resolve: () => {
-          clearTimeout(timeout);
-          resolve();
-        },
-        reject: (error) => {
-          clearTimeout(timeout);
-          reject(error);
-        }
-      });
-
-      const payload = JSON.stringify({ id, text, outputPath });
-      worker.stdin.write(`${payload}\n`, (error) => {
-        if (!error) return;
-        const request = ttsWorkerRequests.get(id);
-        ttsWorkerRequests.delete(id);
-        request?.reject(error);
-      });
-    });
-
-    const stats = await fs.promises.stat(outputPath);
-    if (!stats.size || stats.size > MAX_TTS_AUDIO_BYTES) {
-      throw new Error("Piper speech audio was too large");
-    }
-    return await fs.promises.readFile(outputPath);
+    const result = await Promise.race([
+      synthesis,
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("online speech timed out")), TTS_SYNTHESIS_TIMEOUT_MS);
+        timeout.unref();
+      })
+    ]);
+    return Buffer.from(await result.audio.arrayBuffer());
   } finally {
-    fs.promises.unlink(outputPath).catch(() => {});
-  }
-}
-
-function ensureTtsWorker() {
-  clearTimeout(ttsWorkerIdleTimer);
-  if (ttsWorker?.ready && !ttsWorker.killed) return Promise.resolve();
-  if (ttsWorkerReadyPromise) return ttsWorkerReadyPromise;
-
-  ttsWorkerReadyPromise = new Promise((resolve, reject) => {
-    let settled = false;
-    const worker = spawn(PIPER_PYTHON, [PIPER_WORKER_PATH, PIPER_MODEL_PATH], {
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true
-    });
-    ttsWorker = worker;
-    worker.outputBuffer = "";
-
-    const timeout = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      stopTtsWorker("startup timeout");
-      reject(new Error("Piper worker did not start"));
-    }, TTS_WORKER_START_TIMEOUT_MS);
-    timeout.unref();
-
-    worker.stdout.setEncoding("utf8");
-    worker.stdout.on("data", (chunk) => {
-      worker.outputBuffer += chunk;
-      let newlineIndex = worker.outputBuffer.indexOf("\n");
-      while (newlineIndex >= 0) {
-        const line = worker.outputBuffer.slice(0, newlineIndex).trim();
-        worker.outputBuffer = worker.outputBuffer.slice(newlineIndex + 1);
-        handleTtsWorkerLine(worker, line);
-        if (!settled && worker.ready) {
-          settled = true;
-          clearTimeout(timeout);
-          resolve();
-        }
-        newlineIndex = worker.outputBuffer.indexOf("\n");
-      }
-    });
-
-    worker.stderr.setEncoding("utf8");
-    worker.stderr.on("data", (chunk) => {
-      const message = String(chunk || "").trim();
-      if (message) console.warn("Piper worker:", message.slice(0, 500));
-    });
-
-    worker.on("error", (error) => {
-      if (!settled) {
-        settled = true;
-        clearTimeout(timeout);
-        reject(error);
-      }
-    });
-
-    worker.on("exit", (code, signal) => {
-      const error = new Error(`Piper worker stopped (${signal || code || "unknown"})`);
-      for (const [id, request] of ttsWorkerRequests) {
-        if (request.worker !== worker) continue;
-        ttsWorkerRequests.delete(id);
-        request.reject(error);
-      }
-      if (ttsWorker === worker) ttsWorker = null;
-      if (!settled) {
-        settled = true;
-        clearTimeout(timeout);
-        reject(error);
-      }
-    });
-  }).finally(() => {
-    ttsWorkerReadyPromise = null;
-  });
-
-  return ttsWorkerReadyPromise;
-}
-
-function handleTtsWorkerLine(worker, line) {
-  if (!line) return;
-  let message;
-  try {
-    message = JSON.parse(line);
-  } catch {
-    return;
-  }
-  if (message.type === "ready") {
-    worker.ready = true;
-    return;
-  }
-  const request = ttsWorkerRequests.get(String(message.id || ""));
-  if (!request || request.worker !== worker) return;
-  ttsWorkerRequests.delete(String(message.id || ""));
-  if (message.ok) request.resolve();
-  else request.reject(new Error(String(message.error || "Piper synthesis failed")));
-}
-
-function scheduleTtsWorkerIdleShutdown() {
-  clearTimeout(ttsWorkerIdleTimer);
-  if (!ttsWorker || activeTtsJobs || ttsWorkerRequests.size) return;
-  ttsWorkerIdleTimer = setTimeout(() => stopTtsWorker("idle"), TTS_WORKER_IDLE_MS);
-  ttsWorkerIdleTimer.unref();
-}
-
-function stopTtsWorker(reason) {
-  clearTimeout(ttsWorkerIdleTimer);
-  ttsWorkerIdleTimer = null;
-  const worker = ttsWorker;
-  ttsWorker = null;
-  if (!worker || worker.killed) return;
-  if (reason !== "idle") console.warn(`Stopping Piper worker: ${reason}`);
-  worker.kill("SIGTERM");
-}
-
-function getProcessRssBytes(pid) {
-  if (process.platform !== "linux" || !pid) return 0;
-  try {
-    const status = fs.readFileSync(`/proc/${pid}/status`, "utf8");
-    const rssKb = Number(/^VmRSS:\s+(\d+)\s+kB$/m.exec(status)?.[1] || 0);
-    return rssKb * 1024;
-  } catch {
-    return 0;
-  }
-}
-
-function protectTtsWorkerMemory() {
-  const workerRss = getProcessRssBytes(ttsWorker?.pid);
-  const combinedRss = process.memoryUsage().rss + workerRss;
-  if (workerRss >= TTS_WORKER_MAX_RSS_BYTES || combinedRss >= MEMORY_HARD_RSS_BYTES) {
-    stopTtsWorker("memory limit");
+    clearTimeout(timeout);
   }
 }
 
@@ -2714,8 +2551,7 @@ function pruneChatMessages(aggressive = false, shrinkForMemory = aggressive) {
 function protectRuntimeResources() {
   const now = Date.now();
   const memory = process.memoryUsage();
-  const ttsWorkerRss = getProcessRssBytes(ttsWorker?.pid);
-  const combinedRss = memory.rss + ttsWorkerRss;
+  const combinedRss = memory.rss;
   const aggressive = combinedRss >= MEMORY_SOFT_RSS_BYTES;
 
   pruneChatMessages(aggressive);
@@ -2739,10 +2575,6 @@ function protectRuntimeResources() {
   }
   for (const [deviceId, until] of deviceTimeouts) {
     if (until <= now) deviceTimeouts.delete(deviceId);
-  }
-
-  if (ttsWorkerRss >= TTS_WORKER_MAX_RSS_BYTES || combinedRss >= MEMORY_HARD_RSS_BYTES) {
-    stopTtsWorker("memory limit");
   }
 
   if (combinedRss >= MEMORY_HARD_RSS_BYTES) {
@@ -3064,7 +2896,6 @@ async function startServer() {
 startServer();
 
 setInterval(protectRuntimeResources, 5 * 60 * 1000).unref();
-setInterval(protectTtsWorkerMemory, 15 * 1000).unref();
 setInterval(() => {
   const now = Date.now();
   for (const client of [...connectedSockets]) {

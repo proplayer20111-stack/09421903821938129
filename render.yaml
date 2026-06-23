@@ -1,9 +1,10 @@
 services:
   - type: web
     name: callroom
-    runtime: docker
+    runtime: node
     plan: free
-    dockerfilePath: ./Dockerfile
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
     healthCheckPath: "/healthz"
     autoDeploy: true
     envVars:
@@ -11,5 +12,5 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
-      - key: PIPER_IDLE_MS
-        value: "90000"
+      - key: TTS_VOICE
+        value: "en-US-EmmaMultilingualNeural"
