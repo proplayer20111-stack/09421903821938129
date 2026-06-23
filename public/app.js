@@ -178,6 +178,8 @@ const state = {
   ttsUtterance: null,
   ttsRequestId: 0,
   ttsSpeakerId: null,
+  ttsUnlocked: false,
+  ttsQueue: [],
   hasMic: false,
   lastSpeaking: false,
   lastSpeakingSentAt: 0,
@@ -367,6 +369,7 @@ document.addEventListener("touchend", (event) => {
 }, { passive: false });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
+    if (state.ttsUtterance) window.speechSynthesis?.resume();
     if (state.inCall) requestWakeLock();
     if (state.inCall && state.analyser && !state.meterTimer) setupLocalAudioMeter();
     if (state.token && (!state.ws || state.ws.readyState === WebSocket.CLOSED)) scheduleReconnect(0);
@@ -1172,6 +1175,7 @@ async function setAccountSignupBlock(username, blocked) {
 async function joinCall() {
   if (state.inCall) return;
   warmNotifications();
+  unlockSystemSpeech();
   if (state.callKickUntil > Date.now()) {
     updateJoinKickLock();
     return;
@@ -3413,8 +3417,10 @@ function toggleMute() {
   }
 
   state.muted = !state.muted;
+  if (state.muted) unlockSystemSpeech();
   if (!state.muted) {
     state.ttsRequestId += 1;
+    state.ttsQueue.length = 0;
     window.speechSynthesis?.cancel();
     state.ttsUtterance = null;
     if (state.ttsSpeakerId) setSpeaking(state.ttsSpeakerId, false);
@@ -3732,6 +3738,7 @@ function resetLocalCall(showMessage = true) {
   window.speechSynthesis?.cancel();
   state.ttsUtterance = null;
   state.ttsRequestId += 1;
+  state.ttsQueue.length = 0;
   if (state.ttsSpeakerId) setSpeaking(state.ttsSpeakerId, false);
   state.ttsSpeakerId = null;
 
@@ -3950,15 +3957,21 @@ function speakSystemText(text, speakerId) {
   const cleanText = String(text || "").replace(/\s+/g, " ").trim().slice(0, 280);
   if (!cleanText) return;
 
+  state.ttsQueue.push({ text: cleanText, speakerId });
+  if (!state.ttsUtterance) playNextSystemSpeech();
+}
+
+function playNextSystemSpeech() {
+  if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) return;
+  const next = state.ttsQueue.shift();
+  if (!next) return;
+
   const speech = window.speechSynthesis;
   const requestId = ++state.ttsRequestId;
-  if (state.ttsSpeakerId) setSpeaking(state.ttsSpeakerId, false);
-  state.ttsSpeakerId = null;
-  if (speech.speaking || speech.pending) speech.cancel();
 
   const startAttempt = (usePreferredVoice) => {
     if (requestId !== state.ttsRequestId) return;
-    const utterance = new SpeechSynthesisUtterance(cleanText);
+    const utterance = new SpeechSynthesisUtterance(next.text);
     const preferredVoice = usePreferredVoice ? chooseSystemVoice(speech.getVoices()) : null;
     if (preferredVoice) utterance.voice = preferredVoice;
     utterance.lang = preferredVoice?.lang || "en-US";
@@ -3974,9 +3987,10 @@ function speakSystemText(text, speakerId) {
       settled = true;
       clearTimeout(startTimer);
       if (requestId !== state.ttsRequestId) return;
-      setSpeaking(speakerId, false);
-      if (state.ttsSpeakerId === speakerId) state.ttsSpeakerId = null;
+      setSpeaking(next.speakerId, false);
+      if (state.ttsSpeakerId === next.speakerId) state.ttsSpeakerId = null;
       if (state.ttsUtterance === utterance) state.ttsUtterance = null;
+      setTimeout(playNextSystemSpeech, 20);
     };
     const retryDefault = () => {
       if (settled || started || requestId !== state.ttsRequestId) return;
@@ -3985,8 +3999,10 @@ function speakSystemText(text, speakerId) {
       speech.cancel();
       if (usePreferredVoice) {
         setTimeout(() => startAttempt(false), 50);
-      } else if (speakerId === state.id) {
-        showToast("Windows could not start text to speech");
+      } else {
+        if (next.speakerId === state.id) showToast("this device could not start text to speech");
+        state.ttsUtterance = null;
+        setTimeout(playNextSystemSpeech, 20);
       }
     };
     const startTimer = setTimeout(retryDefault, 1200);
@@ -3995,8 +4011,8 @@ function speakSystemText(text, speakerId) {
       if (requestId !== state.ttsRequestId) return;
       started = true;
       clearTimeout(startTimer);
-      state.ttsSpeakerId = speakerId;
-      setSpeaking(speakerId, true);
+      state.ttsSpeakerId = next.speakerId;
+      setSpeaking(next.speakerId, true);
     }, { once: true });
     utterance.addEventListener("end", finish, { once: true });
     utterance.addEventListener("error", () => {
@@ -4009,6 +4025,30 @@ function speakSystemText(text, speakerId) {
   };
 
   startAttempt(true);
+}
+
+function unlockSystemSpeech() {
+  if (state.ttsUnlocked || !("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) return;
+  const speech = window.speechSynthesis;
+  speech.getVoices();
+  const unlock = new SpeechSynthesisUtterance(".");
+  unlock.volume = 0.01;
+  unlock.rate = 10;
+  const done = () => {
+    clearTimeout(unlockTimer);
+    state.ttsUnlocked = true;
+    if (state.ttsUtterance === unlock) state.ttsUtterance = null;
+    if (state.ttsQueue.length) playNextSystemSpeech();
+  };
+  const unlockTimer = setTimeout(done, 800);
+  unlock.addEventListener("start", () => {
+    state.ttsUnlocked = true;
+  }, { once: true });
+  unlock.addEventListener("end", done, { once: true });
+  unlock.addEventListener("error", done, { once: true });
+  state.ttsUtterance = unlock;
+  speech.speak(unlock);
+  speech.resume();
 }
 
 function chooseSystemVoice(voices) {
