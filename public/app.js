@@ -69,7 +69,6 @@ const ttsPanel = $("#ttsPanel");
 const ttsForm = $("#ttsForm");
 const ttsInput = $("#ttsInput");
 const ttsButton = $("#ttsButton");
-const ttsStatus = $("#ttsStatus");
 const chatLog = $("#chatLog");
 const chatPanel = document.querySelector(".chat-panel");
 const chatForm = $("#chatForm");
@@ -132,8 +131,6 @@ const state = {
   analyser: null,
   audioSource: null,
   micGain: null,
-  ttsGain: null,
-  ttsMonitorGain: null,
   audioDestination: null,
   meterFrame: null,
   meterTimer: null,
@@ -178,9 +175,7 @@ const state = {
   youtubeTitles: new Map(),
   inCall: false,
   muted: false,
-  ttsSpeaking: false,
-  ttsLoading: false,
-  ttsSources: new Set(),
+  ttsUtterance: null,
   hasMic: false,
   lastSpeaking: false,
   lastSpeakingSentAt: 0,
@@ -1175,6 +1170,7 @@ async function setAccountSignupBlock(username, blocked) {
 async function joinCall() {
   if (state.inCall) return;
   warmNotifications();
+  warmSystemSpeech();
   if (state.callKickUntil > Date.now()) {
     updateJoinKickLock();
     return;
@@ -1314,8 +1310,6 @@ async function recoverMicrophone() {
     state.analyser = null;
     state.audioSource = null;
     state.micGain = null;
-    state.ttsGain = null;
-    state.ttsMonitorGain = null;
     state.audioDestination = null;
     await oldAudioContext?.close().catch(() => {});
 
@@ -1627,6 +1621,11 @@ async function handleSignal(message) {
       const chatKind = message.kind === "gif" ? "sent a GIF" : message.kind === "media" ? "sent media" : message.text || "sent a message";
       notifyUser(message.profile?.name || message.name || "New message", chatKind, "chat");
     }
+    return;
+  }
+
+  if (message.type === "tts") {
+    speakSystemText(message.text, message.from);
     return;
   }
 
@@ -3413,6 +3412,10 @@ function toggleMute() {
   }
 
   state.muted = !state.muted;
+  if (!state.muted) {
+    window.speechSynthesis?.cancel();
+    state.ttsUtterance = null;
+  }
   if (state.micGain) {
     state.micGain.gain.setTargetAtTime(state.muted ? 0 : 1, state.audioContext.currentTime, 0.012);
   } else {
@@ -3722,15 +3725,8 @@ function resetLocalCall(showMessage = true) {
   state.stream = null;
   state.rawStream = null;
   state.hasMic = false;
-  for (const source of state.ttsSources) {
-    try {
-      source.stop();
-    } catch {
-    }
-  }
-  state.ttsSources.clear();
-  state.ttsSpeaking = false;
-  state.ttsLoading = false;
+  window.speechSynthesis?.cancel();
+  state.ttsUtterance = null;
 
   if (state.audioContext?.state !== "closed") state.audioContext?.close();
   if (state.remoteAudioContext?.state !== "closed") state.remoteAudioContext?.close();
@@ -3738,8 +3734,6 @@ function resetLocalCall(showMessage = true) {
   state.remoteAudioContext = null;
   state.audioSource = null;
   state.micGain = null;
-  state.ttsGain = null;
-  state.ttsMonitorGain = null;
   state.audioDestination = null;
   state.analyser = null;
   stopAudioMeter();
@@ -3798,10 +3792,6 @@ function createProcessedMicStream(rawStream) {
     gain.gain.value = 1.04;
     state.micGain = state.audioContext.createGain();
     state.micGain.gain.value = state.muted ? 0 : 1;
-    state.ttsGain = state.audioContext.createGain();
-    state.ttsGain.gain.value = 0.92;
-    state.ttsMonitorGain = state.audioContext.createGain();
-    state.ttsMonitorGain.gain.value = 0.78;
 
     state.analyser = state.audioContext.createAnalyser();
     state.analyser.fftSize = 256;
@@ -3816,8 +3806,6 @@ function createProcessedMicStream(rawStream) {
       .connect(state.micGain)
       .connect(state.analyser)
       .connect(state.audioDestination);
-    state.ttsGain.connect(state.analyser);
-    state.ttsMonitorGain.connect(state.audioContext.destination);
 
     const processedTrack = state.audioDestination.stream.getAudioTracks()[0];
     if (processedTrack) processedTrack.contentHint = "speech";
@@ -3856,7 +3844,7 @@ function setupLocalAudioMeter() {
     }
     state.analyser.getByteFrequencyData(samples);
     const average = samples.reduce((sum, value) => sum + value, 0) / samples.length;
-    const speaking = average > 14 && (!state.muted || state.ttsSpeaking);
+    const speaking = average > 14 && !state.muted;
     const now = Date.now();
     setSpeaking(state.id, speaking);
     if (speaking !== state.lastSpeaking || now - state.lastSpeakingSentAt > 700) {
@@ -3929,79 +3917,74 @@ async function submitTextToSpeech(event) {
   event.preventDefault();
   const text = ttsInput.value.trim();
   if (!text) return;
-  await speakTextIntoCall(text);
+  if (!state.inCall || !state.muted) {
+    showToast("mute first to use text to speech");
+    return;
+  }
+  if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {
+    showToast("text to speech is not supported in this browser");
+    return;
+  }
+
+  ttsInput.value = "";
+  speakSystemText(text, state.id);
+  send({ type: "tts", text });
 }
 
 function updateTtsPanel() {
   const available = state.inCall && state.muted;
   ttsPanel.hidden = !available;
-  ttsInput.disabled = !available || state.ttsLoading || state.ttsSpeaking;
-  ttsButton.disabled = !available || state.ttsLoading || state.ttsSpeaking;
-  ttsPanel.classList.toggle("is-loading", state.ttsLoading);
-  ttsPanel.classList.toggle("is-speaking", state.ttsSpeaking);
-  ttsButton.textContent = state.ttsLoading ? "generating..." : state.ttsSpeaking ? "speaking..." : "speak";
-  ttsStatus.textContent = state.ttsLoading
-    ? "Creating the voice..."
-    : state.ttsSpeaking
-      ? "Speaking to everyone in the call."
-      : "Your mic stays muted. Everyone in the call hears the voice.";
+  ttsInput.disabled = !available;
+  ttsButton.disabled = !available;
 }
 
-async function speakTextIntoCall(text) {
-  if (state.ttsLoading || state.ttsSpeaking) return;
-  if (!state.inCall || !state.muted) {
-    showToast("mute first to use text to speech");
-    return;
-  }
-  if (!state.audioContext || !state.ttsGain || !state.ttsMonitorGain || !state.audioDestination) {
-    showToast("text to speech is not supported on this device");
-    return;
-  }
+function speakSystemText(text, speakerId) {
+  if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) return;
+  const cleanText = String(text || "").replace(/\s+/g, " ").trim().slice(0, 280);
+  if (!cleanText) return;
 
-  state.ttsLoading = true;
-  updateTtsPanel();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000);
+  const speech = window.speechSynthesis;
+  speech.cancel();
+  const utterance = new SpeechSynthesisUtterance(cleanText);
+  const voices = speech.getVoices();
+  utterance.voice = chooseSystemVoice(voices);
+  utterance.lang = utterance.voice?.lang || "en-US";
+  utterance.rate = 1.08;
+  utterance.pitch = 1;
+  utterance.volume = 1;
+  state.ttsUtterance = utterance;
 
-  try {
-    const response = await fetch("/api/tts", {
-      method: "POST",
-      headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ text }),
-      signal: controller.signal
-    });
-    if (!response.ok) {
-      const result = await response.json().catch(() => ({}));
-      throw new Error(result.error || "speech failed");
-    }
+  utterance.addEventListener("start", () => setSpeaking(speakerId, true), { once: true });
+  const finish = () => {
+    setSpeaking(speakerId, false);
+    if (state.ttsUtterance === utterance) state.ttsUtterance = null;
+  };
+  utterance.addEventListener("end", finish, { once: true });
+  utterance.addEventListener("error", finish, { once: true });
+  speech.resume();
+  speech.speak(utterance);
+}
 
-    const encodedAudio = await response.arrayBuffer();
-    const audioBuffer = await state.audioContext.decodeAudioData(encodedAudio.slice(0));
-    await state.audioContext.resume();
+function chooseSystemVoice(voices) {
+  const available = Array.isArray(voices) ? voices : [];
+  const english = available.filter((voice) => String(voice.lang || "").toLowerCase().startsWith("en"));
+  return english.find((voice) => /microsoft (david|zira|mark|aria|guy)/i.test(voice.name))
+    || english.find((voice) => voice.localService && voice.default)
+    || english.find((voice) => voice.localService)
+    || english.find((voice) => voice.default)
+    || english[0]
+    || available.find((voice) => voice.default)
+    || available[0]
+    || null;
+}
 
-    const source = state.audioContext.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(state.ttsGain);
-    source.connect(state.ttsMonitorGain);
-    state.ttsSources.add(source);
-    state.ttsLoading = false;
-    state.ttsSpeaking = true;
-    ttsInput.value = "";
-    updateTtsPanel();
-    source.addEventListener("ended", () => {
-      source.disconnect();
-      state.ttsSources.delete(source);
-      state.ttsSpeaking = state.ttsSources.size > 0;
-      updateTtsPanel();
-    }, { once: true });
-    source.start();
-  } catch (error) {
-    showToast(error.name === "AbortError" ? "speech server timed out" : error.message || "speech failed");
-  } finally {
-    clearTimeout(timeout);
-    state.ttsLoading = false;
-    updateTtsPanel();
-  }
+function warmSystemSpeech() {
+  if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) return;
+  window.speechSynthesis.getVoices();
+  const utterance = new SpeechSynthesisUtterance(".");
+  utterance.volume = 0;
+  utterance.rate = 10;
+  window.speechSynthesis.speak(utterance);
 }
 
 async function uploadChatMedia() {
