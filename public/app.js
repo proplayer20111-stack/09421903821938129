@@ -67,6 +67,7 @@ const connectionState = $("#connectionState");
 const micStatus = $("#micStatus");
 const chatLog = $("#chatLog");
 const chatPanel = document.querySelector(".chat-panel");
+const chatTitle = $("#chatTitle");
 const chatForm = $("#chatForm");
 const chatInput = $("#chatInput");
 const chatSendButton = chatForm.querySelector('button[type="submit"]');
@@ -126,6 +127,8 @@ const state = {
   audioContext: null,
   analyser: null,
   audioSource: null,
+  micGain: null,
+  ttsGain: null,
   audioDestination: null,
   meterFrame: null,
   meterTimer: null,
@@ -170,6 +173,9 @@ const state = {
   youtubeTitles: new Map(),
   inCall: false,
   muted: false,
+  ttsSpeaking: false,
+  ttsLoading: false,
+  ttsSources: new Set(),
   hasMic: false,
   lastSpeaking: false,
   lastSpeakingSentAt: 0,
@@ -1043,13 +1049,25 @@ async function clearAllChatMessages() {
 function applyChatState(enabled) {
   state.chatEnabled = Boolean(enabled);
   chatEnabledToggle.checked = state.chatEnabled;
-  chatInput.disabled = !state.chatEnabled;
-  chatSendButton.disabled = !state.chatEnabled;
   mediaButton.disabled = !state.chatEnabled;
   gifButton.disabled = !state.chatEnabled;
-  chatInput.placeholder = state.chatEnabled ? "message or link" : "chat disabled by admin";
   chatPanel.classList.toggle("chat-disabled", !state.chatEnabled);
   if (!state.chatEnabled) gifPanel.hidden = true;
+  updateChatComposer();
+}
+
+function updateChatComposer() {
+  const textToSpeechMode = state.inCall && state.muted;
+  chatInput.disabled = !state.chatEnabled && !textToSpeechMode;
+  chatSendButton.disabled = state.ttsLoading || (!state.chatEnabled && !textToSpeechMode);
+  chatPanel.classList.toggle("tts-mode", textToSpeechMode);
+  chatTitle.textContent = textToSpeechMode ? "Text to speech" : "Chat";
+  chatInput.placeholder = textToSpeechMode
+    ? "type something to speak"
+    : state.chatEnabled
+      ? "message or link"
+      : "chat disabled by admin";
+  if (!state.ttsLoading) chatSendButton.textContent = textToSpeechMode ? "speak" : "send";
 }
 
 function updateAdminChatCount(count) {
@@ -1301,6 +1319,8 @@ async function recoverMicrophone() {
     state.audioContext = null;
     state.analyser = null;
     state.audioSource = null;
+    state.micGain = null;
+    state.ttsGain = null;
     state.audioDestination = null;
     await oldAudioContext?.close().catch(() => {});
 
@@ -1309,7 +1329,8 @@ async function recoverMicrophone() {
     state.rawStream = nextRawStream;
     state.stream = createProcessedMicStream(nextRawStream);
     const nextTrack = state.stream.getAudioTracks()[0];
-    nextTrack.enabled = !state.muted;
+    nextTrack.enabled = true;
+    if (state.micGain) state.micGain.gain.value = state.muted ? 0 : 1;
 
     for (const peer of state.peers.values()) {
       for (const sender of peer.connection.getSenders()) {
@@ -1569,6 +1590,7 @@ async function handleSignal(message) {
   if (message.type === "joined") {
     state.id = message.id;
     state.inCall = true;
+    updateChatComposer();
     startCallHealthMonitor();
     requestWakeLock();
     setupPanel.hidden = true;
@@ -3396,14 +3418,17 @@ function toggleMute() {
   }
 
   state.muted = !state.muted;
-  for (const track of state.stream.getAudioTracks()) {
-    track.enabled = !state.muted;
+  if (state.micGain) {
+    state.micGain.gain.setTargetAtTime(state.muted ? 0 : 1, state.audioContext.currentTime, 0.012);
+  } else {
+    for (const track of state.stream.getAudioTracks()) track.enabled = !state.muted;
   }
 
   muteButton.setAttribute("aria-pressed", String(state.muted));
   muteButton.textContent = state.muted ? "unmute" : "mute";
   setMuted(state.id, state.muted);
   send({ type: "mute", muted: state.muted });
+  updateChatComposer();
 }
 
 function togglePeerMute(id) {
@@ -3702,12 +3727,23 @@ function resetLocalCall(showMessage = true) {
   state.stream = null;
   state.rawStream = null;
   state.hasMic = false;
+  for (const source of state.ttsSources) {
+    try {
+      source.stop();
+    } catch {
+    }
+  }
+  state.ttsSources.clear();
+  state.ttsSpeaking = false;
+  state.ttsLoading = false;
 
   if (state.audioContext?.state !== "closed") state.audioContext?.close();
   if (state.remoteAudioContext?.state !== "closed") state.remoteAudioContext?.close();
   state.audioContext = null;
   state.remoteAudioContext = null;
   state.audioSource = null;
+  state.micGain = null;
+  state.ttsGain = null;
   state.audioDestination = null;
   state.analyser = null;
   stopAudioMeter();
@@ -3729,6 +3765,7 @@ function resetLocalCall(showMessage = true) {
   muteButton.setAttribute("aria-pressed", "false");
   muteButton.textContent = "mute";
   muteButton.disabled = false;
+  updateChatComposer();
   updateScreenShareButton();
   micStatus.textContent = "mic not joined";
   micStatus.className = "mic-status";
@@ -3739,7 +3776,7 @@ function resetLocalCall(showMessage = true) {
 function createProcessedMicStream(rawStream) {
   try {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextClass || state.deviceType === "mobile") return rawStream;
+    if (!AudioContextClass) return rawStream;
 
     state.audioContext = new AudioContextClass({ sampleRate: 48000 });
     state.audioSource = state.audioContext.createMediaStreamSource(rawStream);
@@ -3763,6 +3800,10 @@ function createProcessedMicStream(rawStream) {
 
     const gain = state.audioContext.createGain();
     gain.gain.value = 1.04;
+    state.micGain = state.audioContext.createGain();
+    state.micGain.gain.value = state.muted ? 0 : 1;
+    state.ttsGain = state.audioContext.createGain();
+    state.ttsGain.gain.value = 0.92;
 
     state.analyser = state.audioContext.createAnalyser();
     state.analyser.fftSize = 256;
@@ -3774,8 +3815,10 @@ function createProcessedMicStream(rawStream) {
       .connect(compressor)
       .connect(lowpass)
       .connect(gain)
+      .connect(state.micGain)
       .connect(state.analyser)
       .connect(state.audioDestination);
+    state.ttsGain.connect(state.analyser);
 
     const processedTrack = state.audioDestination.stream.getAudioTracks()[0];
     if (processedTrack) processedTrack.contentHint = "speech";
@@ -3814,7 +3857,7 @@ function setupLocalAudioMeter() {
     }
     state.analyser.getByteFrequencyData(samples);
     const average = samples.reduce((sum, value) => sum + value, 0) / samples.length;
-    const speaking = average > 14 && !state.muted;
+    const speaking = average > 14 && (!state.muted || state.ttsSpeaking);
     const now = Date.now();
     setSpeaking(state.id, speaking);
     if (speaking !== state.lastSpeaking || now - state.lastSpeakingSentAt > 700) {
@@ -3873,14 +3916,64 @@ function setMuted(id, muted) {
       : id === state.id ? "you" : "live";
 }
 
-function sendChat(event) {
+async function sendChat(event) {
   event.preventDefault();
-  if (!state.chatEnabled) return;
   const text = chatInput.value.trim();
   if (!text) return;
 
+  if (state.inCall && state.muted) {
+    await speakTextIntoCall(text);
+    return;
+  }
+  if (!state.chatEnabled) return;
   send({ type: "chat", text });
   chatInput.value = "";
+}
+
+async function speakTextIntoCall(text) {
+  if (state.ttsLoading) return;
+  if (!state.audioContext || !state.ttsGain || !state.audioDestination) {
+    showToast("text to speech is not supported on this device");
+    return;
+  }
+
+  state.ttsLoading = true;
+  updateChatComposer();
+  chatSendButton.textContent = "speaking...";
+
+  try {
+    const response = await fetch("/api/tts", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ text })
+    });
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}));
+      throw new Error(result.error || "speech failed");
+    }
+
+    const encodedAudio = await response.arrayBuffer();
+    const audioBuffer = await state.audioContext.decodeAudioData(encodedAudio.slice(0));
+    await state.audioContext.resume();
+
+    const source = state.audioContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(state.ttsGain);
+    state.ttsSources.add(source);
+    state.ttsSpeaking = true;
+    chatInput.value = "";
+    source.addEventListener("ended", () => {
+      source.disconnect();
+      state.ttsSources.delete(source);
+      state.ttsSpeaking = state.ttsSources.size > 0;
+    }, { once: true });
+    source.start();
+  } catch (error) {
+    showToast(error.message || "speech failed");
+  } finally {
+    state.ttsLoading = false;
+    updateChatComposer();
+  }
 }
 
 async function uploadChatMedia() {

@@ -1007,6 +1007,39 @@ body[data-layout="mobile"] #shareScreenButton {
   width: 100%;
   padding: 12px;
   border-radius: var(--radius-md);
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+
+.chat-panel.tts-mode {
+  opacity: 1;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--soft) 70%, var(--panel));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent), var(--shadow-soft);
+}
+
+.chat-panel.tts-mode h2 {
+  color: var(--accent);
+}
+
+.chat-panel.tts-mode .chat-form {
+  position: relative;
+  padding-top: 25px;
+}
+
+.chat-panel.tts-mode .chat-form::before {
+  content: "muted \2022  sends as voice";
+  position: absolute;
+  top: 0;
+  left: 4px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: bold;
+  letter-spacing: 0.01em;
+}
+
+.chat-panel.tts-mode #chatInput {
+  border-color: var(--accent);
+  background: var(--panel-strong);
 }
 
 .chat-log {

@@ -57,6 +57,7 @@ const kickVotes = new Map();
 const callKicks = new Map();
 const voteKickCooldowns = new Map();
 const pushSubscriptions = new Map();
+const ttsCooldowns = new Map();
 let accounts = loadAccounts();
 let databasePool = null;
 let databaseSaveChain = Promise.resolve();
@@ -95,6 +96,8 @@ const DIRECT_AUDIO_EXTENSIONS = new Set(["mp3", "wav", "m4a", "aac", "oga", "ogg
 const SCREEN_SHARING_ENABLED = false;
 const MAX_ACCOUNTS = 5000;
 const MAX_PUSH_SUBSCRIPTIONS = 1000;
+const MAX_TTS_TEXT_LENGTH = 280;
+const TTS_COOLDOWN_MS = 1200;
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const AUTH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const PUSH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -267,6 +270,12 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/send-gif") {
     if (!requireSiteAccess(req, res)) return;
     await handleGifSend(req, res, url);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/tts") {
+    if (!requireSiteAccess(req, res)) return;
+    await handleTextToSpeech(req, res);
     return;
   }
 
@@ -1790,6 +1799,61 @@ async function handlePushSubscribe(req, res) {
   }
 }
 
+async function handleTextToSpeech(req, res) {
+  const auth = requireAccount(req, res);
+  if (!auth) return;
+
+  const now = Date.now();
+  const lastRequest = ttsCooldowns.get(auth.username) || 0;
+  if (now - lastRequest < TTS_COOLDOWN_MS) {
+    sendJson(res, 429, { error: "wait a moment before speaking again" });
+    return;
+  }
+
+  let body;
+  try {
+    body = await readJson(req);
+  } catch {
+    sendJson(res, 400, { error: "bad speech request" });
+    return;
+  }
+
+  const text = String(body.text || "").replace(/\s+/g, " ").trim().slice(0, MAX_TTS_TEXT_LENGTH);
+  if (!text) {
+    sendJson(res, 400, { error: "type something to speak" });
+    return;
+  }
+
+  ttsCooldowns.set(auth.username, now);
+  const outputPath = path.join(os.tmpdir(), `healthpack-tts-${crypto.randomUUID()}.mp3`);
+
+  try {
+    const { EdgeTTS } = require("node-edge-tts");
+    const tts = new EdgeTTS({
+      voice: "en-US-AriaNeural",
+      lang: "en-US",
+      outputFormat: "audio-24khz-48kbitrate-mono-mp3",
+      rate: "+0%",
+      pitch: "+0Hz",
+      volume: "+0%",
+      timeout: 12000
+    });
+    await tts.ttsPromise(text, outputPath);
+    const audio = await fs.promises.readFile(outputPath);
+    res.writeHead(200, {
+      "Content-Type": "audio/mpeg",
+      "Content-Length": audio.length,
+      "Cache-Control": "no-store"
+    });
+    res.end(audio);
+  } catch (error) {
+    console.warn("Text-to-speech failed:", error?.message || error);
+    sendJson(res, 503, { error: "speech is temporarily unavailable" });
+  } finally {
+    fs.promises.unlink(outputPath).catch(() => {});
+  }
+}
+
 function sendCallStartedPush(starter) {
   if (!webPush || !pushSubscriptions.size) return;
   const title = "Call started";
@@ -2439,6 +2503,7 @@ function protectRuntimeResources() {
   pruneMapByAge(sessions, now, SESSION_TTL_MS, (value) => value?.createdAt);
   pruneMapByAge(siteSessions, now, 24 * 60 * 60 * 1000, (value) => value?.createdAt);
   pruneMapByAge(mediaCooldowns, now, 5 * 60 * 1000, (value) => value);
+  pruneMapByAge(ttsCooldowns, now, 5 * 60 * 1000, (value) => value);
   pruneMapByAge(pushSubscriptions, now, PUSH_TTL_MS, (value) => value?.updatedAt);
 
   for (const [ip, attempt] of accessAttempts) {
