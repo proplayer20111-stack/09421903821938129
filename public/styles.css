@@ -706,10 +706,29 @@ body[data-layout="mobile"] #shareScreenButton {
   background: linear-gradient(transparent 62%, rgba(0, 0, 0, 0.76));
   font-size: 12px;
   text-align: center;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .youtube-player-lock[hidden] {
+  display: none;
+}
+
+.youtube-resume {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.58);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.youtube-resume[hidden] {
   display: none;
 }
 
