@@ -69,6 +69,7 @@ const ttsPanel = $("#ttsPanel");
 const ttsForm = $("#ttsForm");
 const ttsInput = $("#ttsInput");
 const ttsButton = $("#ttsButton");
+const ttsTestButton = $("#ttsTestButton");
 const chatLog = $("#chatLog");
 const chatPanel = document.querySelector(".chat-panel");
 const chatForm = $("#chatForm");
@@ -318,6 +319,7 @@ securityList.addEventListener("click", (event) => {
 });
 chatForm.addEventListener("submit", sendChat);
 ttsForm.addEventListener("submit", submitTextToSpeech);
+ttsTestButton.addEventListener("click", testTextToSpeech);
 mediaButton.addEventListener("click", () => mediaFile.click());
 mediaFile.addEventListener("change", uploadChatMedia);
 gifButton.addEventListener("click", toggleGifPanel);
@@ -3937,19 +3939,11 @@ async function submitTextToSpeech(event) {
     return;
   }
 
+  unlockTtsAudio();
   state.ttsLoading = true;
-  ttsButton.disabled = true;
+  updateTtsPanel();
   try {
-    const response = await fetch("/api/tts", {
-      method: "POST",
-      headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ text, clientId: state.id })
-    });
-    if (!response.ok) {
-      const result = await response.json().catch(() => ({}));
-      throw new Error(result.error || "text to speech failed");
-    }
-    const audio = await response.arrayBuffer();
+    const audio = await requestTextToSpeech(text);
     ttsInput.value = "";
     queueTtsAudio(audio, state.id);
   } catch (error) {
@@ -3960,11 +3954,46 @@ async function submitTextToSpeech(event) {
   }
 }
 
+async function testTextToSpeech() {
+  if (state.ttsLoading) return;
+  if (!state.inCall || !state.muted) {
+    showToast("mute first to test text to speech");
+    return;
+  }
+
+  unlockTtsAudio();
+  state.ttsLoading = true;
+  updateTtsPanel();
+  try {
+    const audio = await requestTextToSpeech("Text to speech is working.", true);
+    queueTtsAudio(audio, state.id);
+  } catch (error) {
+    showToast(error.message || "text to speech test failed");
+  } finally {
+    state.ttsLoading = false;
+    updateTtsPanel();
+  }
+}
+
+async function requestTextToSpeech(text, testOnly = false) {
+  const response = await fetch("/api/tts", {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ text, clientId: state.id, testOnly })
+  });
+  if (!response.ok) {
+    const result = await response.json().catch(() => ({}));
+    throw new Error(result.error || "text to speech failed");
+  }
+  return response.arrayBuffer();
+}
+
 function updateTtsPanel() {
   const available = state.inCall && state.muted;
   ttsPanel.hidden = !available;
   ttsInput.disabled = !available;
   ttsButton.disabled = !available || state.ttsLoading;
+  ttsTestButton.disabled = !available || state.ttsLoading;
 }
 
 function unlockTtsAudio() {

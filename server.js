@@ -1837,6 +1837,7 @@ async function handlePiperTextToSpeech(req, res) {
   }
 
   const text = String(body.text || "").replace(/\s+/g, " ").trim().slice(0, MAX_TTS_TEXT_LENGTH);
+  const testOnly = body.testOnly === true;
   if (!text) {
     sendJson(res, 400, { error: "type something to speak" });
     return;
@@ -1862,14 +1863,16 @@ async function handlePiperTextToSpeech(req, res) {
       throw new Error("Piper returned an invalid audio response");
     }
 
-    broadcast(client.room, {
-      type: "tts-audio",
-      from: client.id,
-      name: client.name,
-      profile: client.profile,
-      audio: audio.toString("base64"),
-      mimeType: "audio/wav"
-    }, client.id);
+    if (!testOnly) {
+      broadcast(client.room, {
+        type: "tts-audio",
+        from: client.id,
+        name: client.name,
+        profile: client.profile,
+        audio: audio.toString("base64"),
+        mimeType: "audio/wav"
+      }, client.id);
+    }
 
     res.writeHead(200, {
       "Content-Type": "audio/wav",
