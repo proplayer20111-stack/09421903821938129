@@ -177,6 +177,7 @@ const state = {
   muted: false,
   ttsUtterance: null,
   ttsRequestId: 0,
+  ttsSpeakerId: null,
   hasMic: false,
   lastSpeaking: false,
   lastSpeakingSentAt: 0,
@@ -3416,6 +3417,8 @@ function toggleMute() {
     state.ttsRequestId += 1;
     window.speechSynthesis?.cancel();
     state.ttsUtterance = null;
+    if (state.ttsSpeakerId) setSpeaking(state.ttsSpeakerId, false);
+    state.ttsSpeakerId = null;
   }
   if (state.micGain) {
     state.micGain.gain.setTargetAtTime(state.muted ? 0 : 1, state.audioContext.currentTime, 0.012);
@@ -3729,6 +3732,8 @@ function resetLocalCall(showMessage = true) {
   window.speechSynthesis?.cancel();
   state.ttsUtterance = null;
   state.ttsRequestId += 1;
+  if (state.ttsSpeakerId) setSpeaking(state.ttsSpeakerId, false);
+  state.ttsSpeakerId = null;
 
   if (state.audioContext?.state !== "closed") state.audioContext?.close();
   if (state.remoteAudioContext?.state !== "closed") state.remoteAudioContext?.close();
@@ -3846,7 +3851,7 @@ function setupLocalAudioMeter() {
     }
     state.analyser.getByteFrequencyData(samples);
     const average = samples.reduce((sum, value) => sum + value, 0) / samples.length;
-    const speaking = average > 14 && !state.muted;
+    const speaking = state.ttsSpeakerId === state.id || (average > 14 && !state.muted);
     const now = Date.now();
     setSpeaking(state.id, speaking);
     if (speaking !== state.lastSpeaking || now - state.lastSpeakingSentAt > 700) {
@@ -3947,6 +3952,8 @@ function speakSystemText(text, speakerId) {
 
   const speech = window.speechSynthesis;
   const requestId = ++state.ttsRequestId;
+  if (state.ttsSpeakerId) setSpeaking(state.ttsSpeakerId, false);
+  state.ttsSpeakerId = null;
   if (speech.speaking || speech.pending) speech.cancel();
 
   const startAttempt = (usePreferredVoice) => {
@@ -3966,7 +3973,9 @@ function speakSystemText(text, speakerId) {
       if (settled) return;
       settled = true;
       clearTimeout(startTimer);
+      if (requestId !== state.ttsRequestId) return;
       setSpeaking(speakerId, false);
+      if (state.ttsSpeakerId === speakerId) state.ttsSpeakerId = null;
       if (state.ttsUtterance === utterance) state.ttsUtterance = null;
     };
     const retryDefault = () => {
@@ -3983,8 +3992,10 @@ function speakSystemText(text, speakerId) {
     const startTimer = setTimeout(retryDefault, 1200);
 
     utterance.addEventListener("start", () => {
+      if (requestId !== state.ttsRequestId) return;
       started = true;
       clearTimeout(startTimer);
+      state.ttsSpeakerId = speakerId;
       setSpeaking(speakerId, true);
     }, { once: true });
     utterance.addEventListener("end", finish, { once: true });
