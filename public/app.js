@@ -176,6 +176,7 @@ const state = {
   inCall: false,
   muted: false,
   ttsUtterance: null,
+  ttsRequestId: 0,
   hasMic: false,
   lastSpeaking: false,
   lastSpeakingSentAt: 0,
@@ -1170,7 +1171,6 @@ async function setAccountSignupBlock(username, blocked) {
 async function joinCall() {
   if (state.inCall) return;
   warmNotifications();
-  warmSystemSpeech();
   if (state.callKickUntil > Date.now()) {
     updateJoinKickLock();
     return;
@@ -3413,6 +3413,7 @@ function toggleMute() {
 
   state.muted = !state.muted;
   if (!state.muted) {
+    state.ttsRequestId += 1;
     window.speechSynthesis?.cancel();
     state.ttsUtterance = null;
   }
@@ -3727,6 +3728,7 @@ function resetLocalCall(showMessage = true) {
   state.hasMic = false;
   window.speechSynthesis?.cancel();
   state.ttsUtterance = null;
+  state.ttsRequestId += 1;
 
   if (state.audioContext?.state !== "closed") state.audioContext?.close();
   if (state.remoteAudioContext?.state !== "closed") state.remoteAudioContext?.close();
@@ -3944,25 +3946,58 @@ function speakSystemText(text, speakerId) {
   if (!cleanText) return;
 
   const speech = window.speechSynthesis;
-  speech.cancel();
-  const utterance = new SpeechSynthesisUtterance(cleanText);
-  const voices = speech.getVoices();
-  utterance.voice = chooseSystemVoice(voices);
-  utterance.lang = utterance.voice?.lang || "en-US";
-  utterance.rate = 1.08;
-  utterance.pitch = 1;
-  utterance.volume = 1;
-  state.ttsUtterance = utterance;
+  const requestId = ++state.ttsRequestId;
+  if (speech.speaking || speech.pending) speech.cancel();
 
-  utterance.addEventListener("start", () => setSpeaking(speakerId, true), { once: true });
-  const finish = () => {
-    setSpeaking(speakerId, false);
-    if (state.ttsUtterance === utterance) state.ttsUtterance = null;
+  const startAttempt = (usePreferredVoice) => {
+    if (requestId !== state.ttsRequestId) return;
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    const preferredVoice = usePreferredVoice ? chooseSystemVoice(speech.getVoices()) : null;
+    if (preferredVoice) utterance.voice = preferredVoice;
+    utterance.lang = preferredVoice?.lang || "en-US";
+    utterance.rate = 1.05;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+    state.ttsUtterance = utterance;
+    let started = false;
+    let settled = false;
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(startTimer);
+      setSpeaking(speakerId, false);
+      if (state.ttsUtterance === utterance) state.ttsUtterance = null;
+    };
+    const retryDefault = () => {
+      if (settled || started || requestId !== state.ttsRequestId) return;
+      settled = true;
+      clearTimeout(startTimer);
+      speech.cancel();
+      if (usePreferredVoice) {
+        setTimeout(() => startAttempt(false), 50);
+      } else if (speakerId === state.id) {
+        showToast("Windows could not start text to speech");
+      }
+    };
+    const startTimer = setTimeout(retryDefault, 1200);
+
+    utterance.addEventListener("start", () => {
+      started = true;
+      clearTimeout(startTimer);
+      setSpeaking(speakerId, true);
+    }, { once: true });
+    utterance.addEventListener("end", finish, { once: true });
+    utterance.addEventListener("error", () => {
+      if (!started) retryDefault();
+      else finish();
+    }, { once: true });
+
+    speech.speak(utterance);
+    speech.resume();
   };
-  utterance.addEventListener("end", finish, { once: true });
-  utterance.addEventListener("error", finish, { once: true });
-  speech.resume();
-  speech.speak(utterance);
+
+  startAttempt(true);
 }
 
 function chooseSystemVoice(voices) {
@@ -3976,15 +4011,6 @@ function chooseSystemVoice(voices) {
     || available.find((voice) => voice.default)
     || available[0]
     || null;
-}
-
-function warmSystemSpeech() {
-  if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) return;
-  window.speechSynthesis.getVoices();
-  const utterance = new SpeechSynthesisUtterance(".");
-  utterance.volume = 0;
-  utterance.rate = 10;
-  window.speechSynthesis.speak(utterance);
 }
 
 async function uploadChatMedia() {
