@@ -175,11 +175,12 @@ const state = {
   youtubeTitles: new Map(),
   inCall: false,
   muted: false,
-  ttsUtterance: null,
-  ttsRequestId: 0,
+  ttsAudioContext: null,
+  ttsAudioQueue: [],
+  ttsAudioPlaying: false,
+  ttsAudioSource: null,
+  ttsLoading: false,
   ttsSpeakerId: null,
-  ttsUnlocked: false,
-  ttsQueue: [],
   hasMic: false,
   lastSpeaking: false,
   lastSpeakingSentAt: 0,
@@ -369,7 +370,7 @@ document.addEventListener("touchend", (event) => {
 }, { passive: false });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
-    if (state.ttsUtterance) window.speechSynthesis?.resume();
+    state.ttsAudioContext?.resume().catch(() => {});
     if (state.inCall) requestWakeLock();
     if (state.inCall && state.analyser && !state.meterTimer) setupLocalAudioMeter();
     if (state.token && (!state.ws || state.ws.readyState === WebSocket.CLOSED)) scheduleReconnect(0);
@@ -1175,7 +1176,7 @@ async function setAccountSignupBlock(username, blocked) {
 async function joinCall() {
   if (state.inCall) return;
   warmNotifications();
-  unlockSystemSpeech();
+  unlockTtsAudio();
   if (state.callKickUntil > Date.now()) {
     updateJoinKickLock();
     return;
@@ -1629,8 +1630,12 @@ async function handleSignal(message) {
     return;
   }
 
-  if (message.type === "tts") {
-    speakSystemText(message.text, message.from);
+  if (message.type === "tts-audio") {
+    try {
+      queueTtsAudio(base64ToArrayBuffer(message.audio), message.from);
+    } catch {
+      showToast("could not play text to speech");
+    }
     return;
   }
 
@@ -3417,12 +3422,9 @@ function toggleMute() {
   }
 
   state.muted = !state.muted;
-  if (state.muted) unlockSystemSpeech();
+  if (state.muted) unlockTtsAudio();
   if (!state.muted) {
-    state.ttsRequestId += 1;
-    state.ttsQueue.length = 0;
-    window.speechSynthesis?.cancel();
-    state.ttsUtterance = null;
+    stopTtsAudio();
     if (state.ttsSpeakerId) setSpeaking(state.ttsSpeakerId, false);
     state.ttsSpeakerId = null;
   }
@@ -3735,10 +3737,9 @@ function resetLocalCall(showMessage = true) {
   state.stream = null;
   state.rawStream = null;
   state.hasMic = false;
-  window.speechSynthesis?.cancel();
-  state.ttsUtterance = null;
-  state.ttsRequestId += 1;
-  state.ttsQueue.length = 0;
+  stopTtsAudio();
+  if (state.ttsAudioContext?.state !== "closed") state.ttsAudioContext?.close();
+  state.ttsAudioContext = null;
   if (state.ttsSpeakerId) setSpeaking(state.ttsSpeakerId, false);
   state.ttsSpeakerId = null;
 
@@ -3930,138 +3931,114 @@ async function sendChat(event) {
 async function submitTextToSpeech(event) {
   event.preventDefault();
   const text = ttsInput.value.trim();
-  if (!text) return;
+  if (!text || state.ttsLoading) return;
   if (!state.inCall || !state.muted) {
     showToast("mute first to use text to speech");
     return;
   }
-  if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {
-    showToast("text to speech is not supported in this browser");
-    return;
-  }
 
-  ttsInput.value = "";
-  speakSystemText(text, state.id);
-  send({ type: "tts", text });
+  state.ttsLoading = true;
+  ttsButton.disabled = true;
+  try {
+    const response = await fetch("/api/tts", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ text, clientId: state.id })
+    });
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}));
+      throw new Error(result.error || "text to speech failed");
+    }
+    const audio = await response.arrayBuffer();
+    ttsInput.value = "";
+    queueTtsAudio(audio, state.id);
+  } catch (error) {
+    showToast(error.message || "text to speech failed");
+  } finally {
+    state.ttsLoading = false;
+    updateTtsPanel();
+  }
 }
 
 function updateTtsPanel() {
   const available = state.inCall && state.muted;
   ttsPanel.hidden = !available;
   ttsInput.disabled = !available;
-  ttsButton.disabled = !available;
+  ttsButton.disabled = !available || state.ttsLoading;
 }
 
-function speakSystemText(text, speakerId) {
-  if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) return;
-  const cleanText = String(text || "").replace(/\s+/g, " ").trim().slice(0, 280);
-  if (!cleanText) return;
-
-  state.ttsQueue.push({ text: cleanText, speakerId });
-  if (!state.ttsUtterance) playNextSystemSpeech();
+function unlockTtsAudio() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  if (!state.ttsAudioContext || state.ttsAudioContext.state === "closed") {
+    state.ttsAudioContext = new AudioContextClass();
+  }
+  state.ttsAudioContext.resume().catch(() => {});
 }
 
-function playNextSystemSpeech() {
-  if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) return;
-  const next = state.ttsQueue.shift();
-  if (!next) return;
+function queueTtsAudio(audio, speakerId) {
+  if (!(audio instanceof ArrayBuffer) || !audio.byteLength) return;
+  unlockTtsAudio();
+  state.ttsAudioQueue.push({ audio, speakerId });
+  playNextTtsAudio();
+}
 
-  const speech = window.speechSynthesis;
-  const requestId = ++state.ttsRequestId;
+async function playNextTtsAudio() {
+  if (state.ttsAudioPlaying || !state.ttsAudioQueue.length) return;
+  unlockTtsAudio();
+  const context = state.ttsAudioContext;
+  if (!context) {
+    showToast("audio playback is not supported on this device");
+    state.ttsAudioQueue.length = 0;
+    return;
+  }
 
-  const startAttempt = (usePreferredVoice) => {
-    if (requestId !== state.ttsRequestId) return;
-    const utterance = new SpeechSynthesisUtterance(next.text);
-    const preferredVoice = usePreferredVoice ? chooseSystemVoice(speech.getVoices()) : null;
-    if (preferredVoice) utterance.voice = preferredVoice;
-    utterance.lang = preferredVoice?.lang || "en-US";
-    utterance.rate = 1.05;
-    utterance.pitch = 1;
-    utterance.volume = 1;
-    state.ttsUtterance = utterance;
-    let started = false;
-    let settled = false;
-
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(startTimer);
-      if (requestId !== state.ttsRequestId) return;
+  const next = state.ttsAudioQueue.shift();
+  state.ttsAudioPlaying = true;
+  try {
+    await context.resume();
+    const decoded = await context.decodeAudioData(next.audio.slice(0));
+    const source = context.createBufferSource();
+    source.buffer = decoded;
+    source.connect(context.destination);
+    state.ttsAudioSource = source;
+    state.ttsSpeakerId = next.speakerId;
+    setSpeaking(next.speakerId, true);
+    source.addEventListener("ended", () => {
       setSpeaking(next.speakerId, false);
       if (state.ttsSpeakerId === next.speakerId) state.ttsSpeakerId = null;
-      if (state.ttsUtterance === utterance) state.ttsUtterance = null;
-      setTimeout(playNextSystemSpeech, 20);
-    };
-    const retryDefault = () => {
-      if (settled || started || requestId !== state.ttsRequestId) return;
-      settled = true;
-      clearTimeout(startTimer);
-      speech.cancel();
-      if (usePreferredVoice) {
-        setTimeout(() => startAttempt(false), 50);
-      } else {
-        if (next.speakerId === state.id) showToast("this device could not start text to speech");
-        state.ttsUtterance = null;
-        setTimeout(playNextSystemSpeech, 20);
-      }
-    };
-    const startTimer = setTimeout(retryDefault, 1200);
-
-    utterance.addEventListener("start", () => {
-      if (requestId !== state.ttsRequestId) return;
-      started = true;
-      clearTimeout(startTimer);
-      state.ttsSpeakerId = next.speakerId;
-      setSpeaking(next.speakerId, true);
+      if (state.ttsAudioSource === source) state.ttsAudioSource = null;
+      state.ttsAudioPlaying = false;
+      source.disconnect();
+      playNextTtsAudio();
     }, { once: true });
-    utterance.addEventListener("end", finish, { once: true });
-    utterance.addEventListener("error", () => {
-      if (!started) retryDefault();
-      else finish();
-    }, { once: true });
-
-    speech.speak(utterance);
-    speech.resume();
-  };
-
-  startAttempt(true);
+    source.start();
+  } catch {
+    setSpeaking(next.speakerId, false);
+    state.ttsAudioPlaying = false;
+    state.ttsAudioSource = null;
+    showToast("could not play text to speech audio");
+    playNextTtsAudio();
+  }
 }
 
-function unlockSystemSpeech() {
-  if (state.ttsUnlocked || !("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) return;
-  const speech = window.speechSynthesis;
-  speech.getVoices();
-  const unlock = new SpeechSynthesisUtterance(".");
-  unlock.volume = 0.01;
-  unlock.rate = 10;
-  const done = () => {
-    clearTimeout(unlockTimer);
-    state.ttsUnlocked = true;
-    if (state.ttsUtterance === unlock) state.ttsUtterance = null;
-    if (state.ttsQueue.length) playNextSystemSpeech();
-  };
-  const unlockTimer = setTimeout(done, 800);
-  unlock.addEventListener("start", () => {
-    state.ttsUnlocked = true;
-  }, { once: true });
-  unlock.addEventListener("end", done, { once: true });
-  unlock.addEventListener("error", done, { once: true });
-  state.ttsUtterance = unlock;
-  speech.speak(unlock);
-  speech.resume();
+function stopTtsAudio() {
+  state.ttsAudioQueue.length = 0;
+  if (state.ttsAudioSource) {
+    try {
+      state.ttsAudioSource.stop();
+    } catch {
+    }
+  }
+  state.ttsAudioSource = null;
+  state.ttsAudioPlaying = false;
 }
 
-function chooseSystemVoice(voices) {
-  const available = Array.isArray(voices) ? voices : [];
-  const english = available.filter((voice) => String(voice.lang || "").toLowerCase().startsWith("en"));
-  return english.find((voice) => /microsoft (david|zira|mark|aria|guy)/i.test(voice.name))
-    || english.find((voice) => voice.localService && voice.default)
-    || english.find((voice) => voice.localService)
-    || english.find((voice) => voice.default)
-    || english[0]
-    || available.find((voice) => voice.default)
-    || available[0]
-    || null;
+function base64ToArrayBuffer(value) {
+  const binary = atob(String(value || ""));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes.buffer;
 }
 
 async function uploadChatMedia() {

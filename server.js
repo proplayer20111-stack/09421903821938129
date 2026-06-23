@@ -57,6 +57,7 @@ const kickVotes = new Map();
 const callKicks = new Map();
 const voteKickCooldowns = new Map();
 const pushSubscriptions = new Map();
+const ttsCooldowns = new Map();
 let accounts = loadAccounts();
 let databasePool = null;
 let databaseSaveChain = Promise.resolve();
@@ -95,12 +96,18 @@ const DIRECT_AUDIO_EXTENSIONS = new Set(["mp3", "wav", "m4a", "aac", "oga", "ogg
 const SCREEN_SHARING_ENABLED = false;
 const MAX_ACCOUNTS = 5000;
 const MAX_PUSH_SUBSCRIPTIONS = 1000;
+const MAX_TTS_TEXT_LENGTH = 280;
+const MAX_TTS_AUDIO_BYTES = 512 * 1024;
+const TTS_COOLDOWN_MS = 700;
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const AUTH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const PUSH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MEMORY_SOFT_RSS_BYTES = 350 * 1024 * 1024;
 const MEMORY_HARD_RSS_BYTES = 425 * 1024 * 1024;
 const GIPHY_API_KEY = process.env.GIPHY_API_KEY || "";
+const AZURE_SPEECH_KEY = String(process.env.AZURE_SPEECH_KEY || "").trim();
+const AZURE_SPEECH_REGION = String(process.env.AZURE_SPEECH_REGION || "").trim();
+const AZURE_SPEECH_VOICE = String(process.env.AZURE_SPEECH_VOICE || "en-US-AriaNeural").trim();
 const TURN_URL = String(process.env.TURN_URL || "").trim();
 const TURN_USERNAME = String(process.env.TURN_USERNAME || "").trim();
 const TURN_CREDENTIAL = String(process.env.TURN_CREDENTIAL || "").trim();
@@ -267,6 +274,12 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/send-gif") {
     if (!requireSiteAccess(req, res)) return;
     await handleGifSend(req, res, url);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/tts") {
+    if (!requireSiteAccess(req, res)) return;
+    await handleAzureTextToSpeech(req, res);
     return;
   }
 
@@ -717,20 +730,6 @@ function handleMessage(client, message) {
     };
     storeChatMessage(chat);
     broadcastPresence(chat);
-    return;
-  }
-
-  if (message.type === "tts") {
-    if (!client.account || !client.room || !client.inCall) return;
-    const text = sanitizeChat(message.text).slice(0, 280);
-    if (!text) return;
-    broadcast(client.room, {
-      type: "tts",
-      from: client.id,
-      name: client.name,
-      profile: client.profile,
-      text
-    }, client.id);
     return;
   }
 
@@ -1804,6 +1803,128 @@ async function handlePushSubscribe(req, res) {
   }
 }
 
+async function handleAzureTextToSpeech(req, res) {
+  const auth = requireAccount(req, res);
+  if (!auth) return;
+  if (!AZURE_SPEECH_KEY || !AZURE_SPEECH_REGION) {
+    sendJson(res, 503, { error: "Azure Speech is not configured yet" });
+    return;
+  }
+
+  let body;
+  try {
+    body = await readJson(req);
+  } catch {
+    sendJson(res, 400, { error: "bad speech request" });
+    return;
+  }
+
+  const client = findConnectedClient(String(body.clientId || ""));
+  if (!client || client.account !== auth.username || !client.inCall || !client.room) {
+    sendJson(res, 403, { error: "join the call before speaking" });
+    return;
+  }
+
+  const text = String(body.text || "").replace(/\s+/g, " ").trim().slice(0, MAX_TTS_TEXT_LENGTH);
+  if (!text) {
+    sendJson(res, 400, { error: "type something to speak" });
+    return;
+  }
+
+  const now = Date.now();
+  const lastRequest = ttsCooldowns.get(auth.username) || 0;
+  if (now - lastRequest < TTS_COOLDOWN_MS) {
+    sendJson(res, 429, { error: "wait a moment before speaking again" });
+    return;
+  }
+  ttsCooldowns.set(auth.username, now);
+
+  try {
+    const audio = await synthesizeAzureSpeech(text);
+    if (!audio.length || audio.length > MAX_TTS_AUDIO_BYTES) {
+      throw new Error("Azure returned an invalid audio response");
+    }
+
+    broadcast(client.room, {
+      type: "tts-audio",
+      from: client.id,
+      name: client.name,
+      profile: client.profile,
+      audio: audio.toString("base64"),
+      mimeType: "audio/mpeg"
+    }, client.id);
+
+    res.writeHead(200, {
+      "Content-Type": "audio/mpeg",
+      "Content-Length": audio.length,
+      "Cache-Control": "no-store"
+    });
+    res.end(audio);
+  } catch (error) {
+    console.warn("Azure text-to-speech failed:", error?.message || error);
+    sendJson(res, 503, { error: "Azure Speech could not create the voice" });
+  }
+}
+
+function synthesizeAzureSpeech(text) {
+  const ssml = [
+    '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis"',
+    ' xmlns:mstts="https://www.w3.org/2001/mstts"',
+    ' xml:lang="en-US">',
+    `<voice name="${escapeXml(AZURE_SPEECH_VOICE)}">`,
+    `<prosody rate="+5%">${escapeXml(text)}</prosody>`,
+    "</voice></speak>"
+  ].join("");
+
+  return new Promise((resolve, reject) => {
+    const request = https.request({
+      hostname: `${AZURE_SPEECH_REGION}.tts.speech.microsoft.com`,
+      path: "/cognitiveservices/v1",
+      method: "POST",
+      headers: {
+        "Ocp-Apim-Subscription-Key": AZURE_SPEECH_KEY,
+        "Content-Type": "application/ssml+xml",
+        "X-Microsoft-OutputFormat": "audio-24khz-48kbitrate-mono-mp3",
+        "User-Agent": "Healthpack-Squad",
+        "Content-Length": Buffer.byteLength(ssml)
+      },
+      timeout: 12000
+    }, (response) => {
+      const chunks = [];
+      let size = 0;
+      response.on("data", (chunk) => {
+        size += chunk.length;
+        if (size > MAX_TTS_AUDIO_BYTES) {
+          request.destroy(new Error("Azure speech response was too large"));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      response.on("end", () => {
+        const result = Buffer.concat(chunks);
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          reject(new Error(`Azure Speech returned ${response.statusCode}: ${result.toString("utf8").slice(0, 180)}`));
+          return;
+        }
+        resolve(result);
+      });
+    });
+    request.on("timeout", () => request.destroy(new Error("Azure Speech timed out")));
+    request.on("error", reject);
+    request.end(ssml);
+  });
+}
+
+function escapeXml(value) {
+  return String(value || "").replace(/[<>&"']/g, (character) => ({
+    "<": "&lt;",
+    ">": "&gt;",
+    "&": "&amp;",
+    '"': "&quot;",
+    "'": "&apos;"
+  })[character]);
+}
+
 function sendCallStartedPush(starter) {
   if (!webPush || !pushSubscriptions.size) return;
   const title = "Call started";
@@ -2453,6 +2574,7 @@ function protectRuntimeResources() {
   pruneMapByAge(sessions, now, SESSION_TTL_MS, (value) => value?.createdAt);
   pruneMapByAge(siteSessions, now, 24 * 60 * 60 * 1000, (value) => value?.createdAt);
   pruneMapByAge(mediaCooldowns, now, 5 * 60 * 1000, (value) => value);
+  pruneMapByAge(ttsCooldowns, now, 5 * 60 * 1000, (value) => value);
   pruneMapByAge(pushSubscriptions, now, PUSH_TTL_MS, (value) => value?.updatedAt);
 
   for (const [ip, attempt] of accessAttempts) {

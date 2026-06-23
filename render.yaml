@@ -12,3 +12,9 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
+      - key: AZURE_SPEECH_KEY
+        sync: false
+      - key: AZURE_SPEECH_REGION
+        sync: false
+      - key: AZURE_SPEECH_VOICE
+        value: en-US-AriaNeural

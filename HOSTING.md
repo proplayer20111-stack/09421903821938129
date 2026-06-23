@@ -57,6 +57,12 @@ If Git asks you to sign in, follow the browser sign-in prompt.
    - Value: your private site password
    - Optional key: `GIPHY_API_KEY`
    - Optional value: a GIPHY developer API key, only needed for live GIF search
+   - Optional key: `AZURE_SPEECH_KEY`
+   - Optional value: the key from an Azure Speech resource
+   - Optional key: `AZURE_SPEECH_REGION`
+   - Optional value: the resource region, such as `eastus`
+   - Optional key: `AZURE_SPEECH_VOICE`
+   - Optional value: an Azure voice such as `en-US-AriaNeural`
 8. Click deploy.
 9. Wait until Render says the service is live.
 10. If you add or change `GIPHY_API_KEY` later, redeploy or restart the Render service so Node sees the new value.
