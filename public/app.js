@@ -28,6 +28,7 @@ const youtubeUrl = $("#youtubeUrl");
 const youtubeAddButton = youtubeForm.querySelector('button[type="submit"]');
 const youtubeOwner = $("#youtubeOwner");
 const youtubeStage = $("#youtubeStage");
+const youtubeStageExitButton = $("#youtubeStageExitButton");
 const youtubePlayerLock = $("#youtubePlayerLock");
 const youtubeResumeButton = $("#youtubeResumeButton");
 const directMediaPlayer = $("#directMediaPlayer");
@@ -259,6 +260,7 @@ themeButton.addEventListener("click", () => {
 youtubeButton.addEventListener("click", toggleYoutubePanel);
 youtubeCloseButton.addEventListener("click", hideYoutubePanel);
 youtubeFullscreenButton.addEventListener("click", toggleYoutubeFullscreen);
+youtubeStageExitButton.addEventListener("click", toggleYoutubeFullscreen);
 youtubeForm.addEventListener("submit", queueYoutubeVideo);
 youtubePlayButton.addEventListener("click", toggleYoutubePlayback);
 youtubeRestartButton.addEventListener("click", restartYoutubeVideo);
@@ -2259,8 +2261,8 @@ async function showYoutubePanel() {
 }
 
 function hideYoutubePanel() {
-  if (document.fullscreenElement === youtubePanel) document.exitFullscreen().catch(() => {});
-  youtubePanel.classList.remove("youtube-expanded");
+  if (document.fullscreenElement === youtubeStage) document.exitFullscreen().catch(() => {});
+  youtubeStage.classList.remove("youtube-stage-expanded");
   youtubePanel.hidden = true;
   youtubeButton.setAttribute("aria-pressed", "false");
   destroyYoutubePlayer();
@@ -2477,7 +2479,7 @@ function reconcileDirectMedia(force = false) {
 }
 
 function reconcileYoutubePlayer(force = false) {
-  if (youtubePanel.hidden) return;
+  if (youtubePanel.hidden || youtubeStage.hidden) return;
   if (!state.youtube.currentId) return;
   if (state.youtube.kind === "direct") {
     reconcileDirectMedia(force);
@@ -2784,26 +2786,27 @@ function startYoutubeTimers() {
 }
 
 async function toggleYoutubeFullscreen() {
-  if (youtubePanel.hidden) return;
+  if (youtubePanel.hidden || youtubeStage.hidden) return;
   try {
-    if (document.fullscreenElement === youtubePanel) {
+    if (document.fullscreenElement === youtubeStage) {
       await document.exitFullscreen();
-    } else if (youtubePanel.requestFullscreen) {
-      await youtubePanel.requestFullscreen();
+    } else if (youtubeStage.requestFullscreen) {
+      await youtubeStage.requestFullscreen();
     } else {
-      youtubePanel.classList.toggle("youtube-expanded");
+      youtubeStage.classList.toggle("youtube-stage-expanded");
     }
   } catch {
-    youtubePanel.classList.toggle("youtube-expanded");
+    youtubeStage.classList.toggle("youtube-stage-expanded");
   }
   updateYoutubeFullscreenButton();
 }
 
 function updateYoutubeFullscreenButton() {
-  const expanded = document.fullscreenElement === youtubePanel || youtubePanel.classList.contains("youtube-expanded");
+  const expanded = document.fullscreenElement === youtubeStage || youtubeStage.classList.contains("youtube-stage-expanded");
   youtubeFullscreenButton.textContent = expanded ? "×" : "⛶";
   youtubeFullscreenButton.setAttribute("aria-label", expanded ? "exit media fullscreen" : "enter media fullscreen");
   youtubeFullscreenButton.title = expanded ? "exit fullscreen" : "fullscreen";
+  youtubeStageExitButton.hidden = !expanded;
 }
 
 function updateScreenShareButton() {

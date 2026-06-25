@@ -802,34 +802,44 @@ body[data-layout="mobile"] #shareScreenButton {
   min-width: 72px;
 }
 
-.youtube-panel:fullscreen,
-.youtube-panel.youtube-expanded {
+.youtube-stage:fullscreen,
+.youtube-stage.youtube-stage-expanded {
   width: 100vw;
-  height: 100vh;
+  height: 100dvh;
   max-width: none;
   margin: 0;
-  padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
   border: 0;
   border-radius: 0;
-  background: var(--panel);
-  overflow: auto;
+  aspect-ratio: auto;
+  background: #000;
 }
 
-.youtube-panel.youtube-expanded {
+.youtube-stage.youtube-stage-expanded {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: 80;
 }
 
-.youtube-panel:fullscreen .youtube-stage,
-.youtube-panel.youtube-expanded .youtube-stage {
-  max-height: calc(100vh - 190px);
+.youtube-stage-exit {
+  position: absolute;
+  top: max(12px, env(safe-area-inset-top));
+  right: max(12px, env(safe-area-inset-right));
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.62);
+  font-size: 24px;
+  line-height: 1;
 }
 
-.youtube-panel:fullscreen .youtube-queue,
-.youtube-panel.youtube-expanded .youtube-queue {
-  max-height: 120px;
-  overflow-y: auto;
+.youtube-stage-exit[hidden] {
+  display: none;
 }
 
 .profile-row {
