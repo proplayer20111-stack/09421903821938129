@@ -5,3 +5,6 @@ chat-settings.json
 *.log
 .env
 node_modules/
+quest-app/.gradle/
+quest-app/local.properties
+quest-app/**/build/
