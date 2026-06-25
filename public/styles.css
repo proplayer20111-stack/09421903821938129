@@ -689,12 +689,6 @@ body[data-layout="mobile"] #shareScreenButton {
   display: none;
 }
 
-.youtube-supported {
-  margin-bottom: 10px;
-  color: var(--muted);
-  font-size: 11px;
-}
-
 .youtube-player-lock {
   position: absolute;
   inset: 0;

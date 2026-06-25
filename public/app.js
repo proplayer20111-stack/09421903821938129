@@ -1394,7 +1394,7 @@ async function handleSignal(message) {
   if (message.type === "youtube-error") {
     youtubeUrl.disabled = false;
     youtubeAddButton.disabled = false;
-    youtubeAddButton.textContent = "add to queue";
+    youtubeAddButton.textContent = "add";
     showToast(message.message || "media sync failed");
     youtubeOwner.textContent = message.message || "media link could not be added";
     return;
@@ -1404,8 +1404,8 @@ async function handleSignal(message) {
     const checking = message.status === "checking";
     youtubeUrl.disabled = checking;
     youtubeAddButton.disabled = checking;
-    youtubeAddButton.textContent = checking ? "finding media..." : "add to queue";
-    if (checking) youtubeOwner.textContent = "Checking that page for playable media...";
+    youtubeAddButton.textContent = checking ? "loading..." : "add";
+    if (checking) youtubeOwner.textContent = "Loading...";
     return;
   }
 
@@ -2296,14 +2296,14 @@ function queueYoutubeVideo(event) {
   event.preventDefault();
   const url = youtubeUrl.value.trim();
   if (!url) {
-    showToast("paste a YouTube or direct media link");
+    showToast("paste a YouTube link");
     return;
   }
   send({ type: "youtube-queue-add", url });
   youtubeUrl.value = "";
   youtubeUrl.disabled = true;
   youtubeAddButton.disabled = true;
-  youtubeAddButton.textContent = "finding media...";
+  youtubeAddButton.textContent = "loading...";
 }
 
 async function applyYoutubeState(message) {
@@ -2354,12 +2354,15 @@ function renderYoutubeRoom() {
   const owner = isYoutubeController();
   youtubeControls.hidden = !active || !owner;
   youtubePlayerLock.hidden = !active || owner;
+  youtubePlayerLock.textContent = active && !owner
+    ? `${state.youtube.controllerName || state.youtube.controller} is in control`
+    : "";
   youtubeResumeButton.hidden = !active || state.youtube.kind !== "youtube" || !state.youtubeNeedsResume;
   youtubeOwner.textContent = active
     ? owner
-      ? "You queued this video - controls are yours"
-      : `${state.youtube.controllerName || state.youtube.controller} controls this video`
-    : "Queue a video to start";
+      ? "You're in control"
+      : `${state.youtube.controllerName || state.youtube.controller} is in control`
+    : "";
   youtubePlayButton.textContent = state.youtube.status === "playing" ? "pause" : "play";
 
   youtubeQueue.textContent = "";

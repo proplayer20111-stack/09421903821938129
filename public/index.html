@@ -112,8 +112,8 @@
             <section class="youtube-panel" id="youtubePanel" hidden>
               <div class="youtube-panel-head">
                 <div>
-                  <h2>Watch Together</h2>
-                  <div class="youtube-owner" id="youtubeOwner">Queue media to start</div>
+                  <h2>YouTube player</h2>
+                  <div class="youtube-owner" id="youtubeOwner"></div>
                 </div>
                 <div class="youtube-head-actions">
                   <button class="youtube-fullscreen" id="youtubeFullscreenButton" type="button" aria-label="enter media fullscreen" title="fullscreen">⛶</button>
@@ -121,14 +121,13 @@
                 </div>
               </div>
               <form class="youtube-add" id="youtubeForm">
-                <input id="youtubeUrl" type="text" inputmode="url" autocomplete="off" placeholder="paste a video, audio, YouTube, or webpage link" aria-label="media link">
-                <button class="blue small" type="submit">add to queue</button>
+                <input id="youtubeUrl" type="text" inputmode="url" autocomplete="off" placeholder="paste a YouTube link" aria-label="media link">
+                <button class="blue small" type="submit">add</button>
               </form>
-              <div class="youtube-supported">Paste a webpage and Healthpack will look for embedded media. Direct YouTube, Catbox, video, and audio links also work.</div>
               <div class="youtube-stage" id="youtubeStage" hidden>
                 <div id="youtubePlayer"></div>
                 <video id="directMediaPlayer" controls playsinline preload="metadata" hidden></video>
-                <div class="youtube-player-lock" id="youtubePlayerLock" hidden>Only the person who queued this video controls the room</div>
+                <div class="youtube-player-lock" id="youtubePlayerLock" hidden></div>
                 <button class="youtube-resume" id="youtubeResumeButton" type="button" hidden>tap to join playback</button>
               </div>
               <div class="youtube-controls" id="youtubeControls" hidden>
@@ -138,7 +137,7 @@
                 <span id="youtubeTime">0:00 / 0:00</span>
                 <button class="small" id="youtubeNextButton" type="button">next</button>
               </div>
-              <div class="youtube-empty" id="youtubeEmpty">Nothing queued yet.</div>
+              <div class="youtube-empty" id="youtubeEmpty">No video queued.</div>
               <div class="youtube-queue" id="youtubeQueue"></div>
             </section>
             <div class="people" id="participants" hidden></div>
