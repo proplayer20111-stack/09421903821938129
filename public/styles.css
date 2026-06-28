@@ -245,14 +245,12 @@ body[data-theme="liquid-black"] .tts-panel {
 }
 
 body[data-theme="liquid"] .person,
-body[data-theme="liquid"] .chat-entry,
 body[data-theme="liquid"] .bubble,
 body[data-theme="liquid"] input,
 body[data-theme="liquid"] select,
 body[data-theme="liquid"] button.plain,
 body[data-theme="liquid"] button.small,
 body[data-theme="liquid-black"] .person,
-body[data-theme="liquid-black"] .chat-entry,
 body[data-theme="liquid-black"] .bubble,
 body[data-theme="liquid-black"] input,
 body[data-theme="liquid-black"] select,
@@ -347,6 +345,105 @@ body[data-theme="liquid-black"] .bubble.mine {
     linear-gradient(135deg, color-mix(in srgb, var(--accent-fill) 88%, white 12%), var(--accent)),
     rgba(37, 99, 235, 0.78);
   border-color: rgba(255, 255, 255, 0.16);
+}
+
+body[data-theme="liquid"] .chat-entry,
+body[data-theme="liquid-black"] .chat-entry {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+body[data-theme="liquid"] .bubble,
+body[data-theme="liquid-black"] .bubble {
+  backdrop-filter: blur(18px) saturate(1.5);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  transition:
+    transform 240ms cubic-bezier(0.18, 0.9, 0.2, 1.28),
+    border-color 180ms ease,
+    background 220ms ease,
+    box-shadow 220ms ease,
+    filter 220ms ease;
+}
+
+body[data-theme="liquid"] .bubble:hover,
+body[data-theme="liquid-black"] .bubble:hover {
+  transform: translateY(-2px) scale(1.012);
+  filter: brightness(1.04);
+}
+
+body[data-theme="liquid"] button,
+body[data-theme="liquid-black"] button,
+body[data-theme="liquid"] .person,
+body[data-theme="liquid-black"] .person,
+body[data-theme="liquid"] input,
+body[data-theme="liquid-black"] input,
+body[data-theme="liquid"] select,
+body[data-theme="liquid-black"] select {
+  transition:
+    transform 260ms cubic-bezier(0.18, 0.9, 0.2, 1.35),
+    box-shadow 220ms ease,
+    border-color 180ms ease,
+    background 220ms ease,
+    filter 220ms ease;
+}
+
+body[data-theme="liquid"] button:not(:disabled),
+body[data-theme="liquid-black"] button:not(:disabled) {
+  position: relative;
+  overflow: hidden;
+}
+
+body[data-theme="liquid"] button:not(:disabled)::after,
+body[data-theme="liquid-black"] button:not(:disabled)::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  opacity: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 28% 12%, rgba(255, 255, 255, 0.72), transparent 34%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.16), transparent 58%);
+  transition: opacity 180ms ease;
+}
+
+body[data-theme="liquid"] button:hover:not(:disabled),
+body[data-theme="liquid-black"] button:hover:not(:disabled) {
+  transform: translateY(-2px) scale(1.025);
+  filter: brightness(1.06);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.48),
+    0 16px 34px rgba(15, 23, 42, 0.18);
+}
+
+body[data-theme="liquid"] button:hover:not(:disabled)::after,
+body[data-theme="liquid-black"] button:hover:not(:disabled)::after {
+  opacity: 1;
+}
+
+body[data-theme="liquid"] button:active:not(:disabled),
+body[data-theme="liquid-black"] button:active:not(:disabled) {
+  transform: translateY(1px) scale(0.965, 1.045);
+  filter: brightness(1.12);
+}
+
+body[data-theme="liquid"] .person:hover,
+body[data-theme="liquid-black"] .person:hover {
+  transform: translateY(-3px) scale(1.012);
+  filter: brightness(1.04);
+}
+
+body[data-theme="liquid"] .person:active,
+body[data-theme="liquid-black"] .person:active {
+  transform: scale(1.025, 0.975);
+  filter: brightness(1.10);
+}
+
+body[data-theme="liquid"] .person.speaking,
+body[data-theme="liquid-black"] .person.speaking {
+  animation: liquid-speaking 1.35s ease-in-out infinite;
 }
 
 .app-box {
@@ -1598,6 +1695,24 @@ body[data-theme="liquid-black"] {
   }
 }
 
+@keyframes liquid-speaking {
+  0%, 100% {
+    transform: translateY(-1px) scale(1);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.34),
+      0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent),
+      var(--shadow-soft);
+  }
+
+  50% {
+    transform: translateY(-2px) scale(1.018, 0.992);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.52),
+      0 0 0 5px color-mix(in srgb, var(--accent) 24%, transparent),
+      0 18px 42px color-mix(in srgb, var(--accent) 20%, transparent);
+  }
+}
+
 @keyframes vote-pop {
   0% {
     opacity: 0;
@@ -2019,6 +2134,25 @@ body[data-theme="liquid-black"] {
   .gif-panel {
     animation: none;
     transition: none;
+  }
+
+  body[data-theme="liquid"] button,
+  body[data-theme="liquid-black"] button,
+  body[data-theme="liquid"] .person,
+  body[data-theme="liquid-black"] .person,
+  body[data-theme="liquid"] .bubble,
+  body[data-theme="liquid-black"] .bubble {
+    transition:
+      transform 220ms cubic-bezier(0.18, 0.9, 0.2, 1.25),
+      box-shadow 180ms ease,
+      border-color 160ms ease,
+      background 180ms ease,
+      filter 180ms ease;
+  }
+
+  body[data-theme="liquid"] .person.speaking,
+  body[data-theme="liquid-black"] .person.speaking {
+    animation: liquid-speaking 1.35s ease-in-out infinite;
   }
 }
 
