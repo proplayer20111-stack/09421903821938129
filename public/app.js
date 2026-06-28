@@ -231,7 +231,9 @@ const state = {
   chatIds: new Set(),
   originalTitle: document.title,
   titleTimer: null,
-  liquidPointer: null
+  liquidPointer: null,
+  speakingEnergy: 0,
+  lastVoiceAt: 0
 };
 
 const rtcConfig = {
@@ -663,7 +665,6 @@ function startLiquidPointerStretch(event) {
   if (event.pointerType === "mouse" && event.button !== 0) return;
   const element = liquidInteractiveTarget(event.target);
   if (!element) return;
-  event.preventDefault();
   const rect = element.getBoundingClientRect();
   state.liquidPointer = {
     element,
@@ -671,44 +672,71 @@ function startLiquidPointerStretch(event) {
     startX: event.clientX,
     startY: event.clientY,
     width: Math.max(1, rect.width),
-    height: Math.max(1, rect.height)
+    height: Math.max(1, rect.height),
+    active: false,
+    moved: false,
+    x: 0,
+    y: 0,
+    scaleX: 1,
+    scaleY: 1,
+    holdTimer: setTimeout(() => activateLiquidPointerStretch(event.pointerId), 135)
   };
+}
+
+function activateLiquidPointerStretch(pointerId) {
+  const active = state.liquidPointer;
+  if (!active || active.pointerId !== pointerId || active.active || active.moved || active.element.isConnected === false) return;
+  active.active = true;
   try {
-    element.setPointerCapture?.(event.pointerId);
+    active.element.setPointerCapture?.(pointerId);
   } catch {
   }
   document.body.classList.add("liquid-dragging");
-  element.classList.add("liquid-held");
-  element.style.setProperty("--liquid-x", "0px");
-  element.style.setProperty("--liquid-y", "0px");
-  element.style.setProperty("--liquid-scale-x", "1.035");
-  element.style.setProperty("--liquid-scale-y", "0.975");
+  active.element.classList.add("liquid-held");
+  active.element.style.setProperty("--liquid-x", "0px");
+  active.element.style.setProperty("--liquid-y", "0px");
+  active.element.style.setProperty("--liquid-scale-x", "1.01");
+  active.element.style.setProperty("--liquid-scale-y", "0.995");
 }
 
 function updateLiquidPointerStretch(event) {
   const active = state.liquidPointer;
   if (!active || active.pointerId !== event.pointerId || active.element.isConnected === false) return;
+  const rawDx = event.clientX - active.startX;
+  const rawDy = event.clientY - active.startY;
+  const distance = Math.hypot(rawDx, rawDy);
+  if (!active.active && distance > 9) {
+    active.moved = true;
+    clearTimeout(active.holdTimer);
+    return;
+  }
+  if (!active.active) return;
   event.preventDefault();
   const maxX = Math.min(14, active.width * 0.055);
   const maxY = Math.min(10, active.height * 0.08);
-  const dx = Math.max(-maxX, Math.min(maxX, (event.clientX - active.startX) * 0.20));
-  const dy = Math.max(-maxY, Math.min(maxY, (event.clientY - active.startY) * 0.20));
+  const dx = Math.max(-maxX, Math.min(maxX, rawDx * 0.14));
+  const dy = Math.max(-maxY, Math.min(maxY, rawDy * 0.14));
   const stretchX = 1 + Math.min(0.038, Math.abs(dx) / Math.max(160, active.width * 4));
   const stretchY = 1 + Math.min(0.032, Math.abs(dy) / Math.max(160, active.height * 5));
-  active.element.style.setProperty("--liquid-x", `${dx}px`);
-  active.element.style.setProperty("--liquid-y", `${dy}px`);
-  active.element.style.setProperty("--liquid-scale-x", String(stretchX));
-  active.element.style.setProperty("--liquid-scale-y", String(Math.max(0.94, 1 / stretchY)));
+  active.x += (dx - active.x) * 0.22;
+  active.y += (dy - active.y) * 0.22;
+  active.scaleX += (stretchX - active.scaleX) * 0.20;
+  active.scaleY += ((Math.max(0.972, 1 / stretchY)) - active.scaleY) * 0.20;
+  active.element.style.setProperty("--liquid-x", `${active.x.toFixed(2)}px`);
+  active.element.style.setProperty("--liquid-y", `${active.y.toFixed(2)}px`);
+  active.element.style.setProperty("--liquid-scale-x", active.scaleX.toFixed(4));
+  active.element.style.setProperty("--liquid-scale-y", active.scaleY.toFixed(4));
 }
 
 function finishLiquidPointerStretch(event) {
   const active = state.liquidPointer;
   if (!active || active.pointerId !== event.pointerId) return;
-  event.preventDefault();
+  clearTimeout(active.holdTimer);
+  if (active.active) event.preventDefault();
   state.liquidPointer = null;
   const element = active.element;
   document.body.classList.remove("liquid-dragging");
-  if (!element?.isConnected) return;
+  if (!element?.isConnected || !active.active) return;
   try {
     element.releasePointerCapture?.(event.pointerId);
   } catch {
@@ -4112,6 +4140,8 @@ function resetLocalCall(showMessage = true) {
   state.muted = false;
   state.ttsPanelOpen = false;
   state.lastSpeaking = false;
+  state.speakingEnergy = 0;
+  state.lastVoiceAt = 0;
   muteButton.setAttribute("aria-pressed", "false");
   muteButton.textContent = "mute";
   muteButton.disabled = false;
@@ -4204,12 +4234,17 @@ function setupLocalAudioMeter() {
     }
     state.analyser.getByteFrequencyData(samples);
     const average = samples.reduce((sum, value) => sum + value, 0) / samples.length;
-    const speaking = state.ttsSpeakerId === state.id || (average > 14 && !state.muted);
     const now = Date.now();
-    setSpeaking(state.id, speaking);
+    const activeVoice = average > 18 && !state.muted;
+    state.speakingEnergy = activeVoice
+      ? Math.min(6, state.speakingEnergy + 1.4)
+      : Math.max(0, state.speakingEnergy - 1);
+    if (activeVoice) state.lastVoiceAt = now;
+    const speaking = state.ttsSpeakerId === state.id || (state.speakingEnergy >= 2.6 && now - state.lastVoiceAt < 900);
     if (speaking !== state.lastSpeaking || now - state.lastSpeakingSentAt > 700) {
       state.lastSpeaking = speaking;
       state.lastSpeakingSentAt = now;
+      setSpeaking(state.id, speaking);
       send({ type: "speaking", speaking });
     }
     state.meterTimer = setTimeout(tick, state.deviceType === "mobile" ? MOBILE_METER_INTERVAL_MS : DESKTOP_METER_INTERVAL_MS);
@@ -4223,6 +4258,14 @@ function stopAudioMeter() {
   state.meterFrame = null;
   clearTimeout(state.meterTimer);
   state.meterTimer = null;
+  state.speakingEnergy = 0;
+  state.lastVoiceAt = 0;
+  if (state.lastSpeaking) {
+    state.lastSpeaking = false;
+    state.lastSpeakingSentAt = Date.now();
+    setSpeaking(state.id, false);
+    send({ type: "speaking", speaking: false });
+  }
 }
 
 async function flushIce(peer) {
