@@ -550,7 +550,7 @@ function loadTheme() {
     localStorage.removeItem(THEME_KEY);
   }
 
-  const modes = new Set(["white", "black", "liquid"]);
+  const modes = new Set(["white", "black", "liquid", "liquid-black"]);
   const mode = modes.has(saved?.mode) ? saved.mode : "white";
   const accents = new Set(["blue", "purple", "green", "red", "pink", "orange"]);
   const accent = accents.has(saved?.accent) ? saved.accent : "blue";
@@ -564,7 +564,7 @@ function loadTheme() {
 }
 
 function saveTheme() {
-  const mode = ["white", "black", "liquid"].includes(themeMode.value) ? themeMode.value : "white";
+  const mode = isThemeMode(themeMode.value) ? themeMode.value : "white";
   const accent = ["blue", "purple", "green", "red", "pink", "orange"].includes(themeAccent.value)
     ? themeAccent.value
     : "blue";
@@ -604,7 +604,7 @@ async function saveThemeBackground() {
     if (!response.ok) throw new Error(result.error || "background upload failed");
     const background = result.url;
     const previous = readSavedTheme();
-    const mode = ["white", "black", "liquid"].includes(previous.mode) ? previous.mode : "liquid";
+    const mode = isThemeMode(previous.mode) ? previous.mode : "liquid";
     const accent = ["blue", "purple", "green", "red", "pink", "orange"].includes(previous.accent) ? previous.accent : "blue";
     localStorage.setItem(THEME_KEY, JSON.stringify({ mode, accent, background }));
     themeMode.value = mode;
@@ -620,7 +620,7 @@ async function saveThemeBackground() {
 
 function clearThemeBackground() {
   const previous = readSavedTheme();
-  const mode = ["white", "black", "liquid"].includes(previous.mode) ? previous.mode : themeMode.value;
+  const mode = isThemeMode(previous.mode) ? previous.mode : themeMode.value;
   const accent = ["blue", "purple", "green", "red", "pink", "orange"].includes(previous.accent) ? previous.accent : themeAccent.value;
   localStorage.setItem(THEME_KEY, JSON.stringify({ mode, accent, background: "" }));
   applyTheme(mode, accent, "");
@@ -630,6 +630,10 @@ function clearThemeBackground() {
 function isThemeBackgroundUrl(value) {
   const text = String(value || "");
   return text.startsWith("data:image/") || /^https:\/\/files\.catbox\.moe\/\S+$/i.test(text);
+}
+
+function isThemeMode(value) {
+  return ["white", "black", "liquid", "liquid-black"].includes(value);
 }
 
 function applyTheme(mode, accent, background = "") {
