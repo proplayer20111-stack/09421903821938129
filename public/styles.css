@@ -347,13 +347,34 @@ body[data-theme="liquid-black"] .bubble.mine {
   border-color: rgba(255, 255, 255, 0.16);
 }
 
+body[data-theme="liquid"] .chat-log,
+body[data-theme="liquid-black"] .chat-log {
+  overflow-x: visible;
+}
+
+body.liquid-dragging,
+body.liquid-dragging .chat-log {
+  overscroll-behavior: none;
+  scroll-behavior: auto;
+}
+
 body[data-theme="liquid"] .chat-entry,
 body[data-theme="liquid-black"] .chat-entry {
+  position: relative;
+  z-index: 1;
   background: transparent;
   border: 0;
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+  overflow: visible;
+}
+
+body[data-theme="liquid"] .chat-entry:has(.liquid-held),
+body[data-theme="liquid"] .chat-entry:has(.liquid-release),
+body[data-theme="liquid-black"] .chat-entry:has(.liquid-held),
+body[data-theme="liquid-black"] .chat-entry:has(.liquid-release) {
+  z-index: 9;
 }
 
 body[data-theme="liquid"] .bubble,
@@ -448,18 +469,21 @@ body[data-theme="liquid-black"] .person.speaking {
 
 body[data-theme="liquid"] .liquid-held,
 body[data-theme="liquid-black"] .liquid-held {
+  position: relative;
+  z-index: 12;
   transform:
     translate(var(--liquid-x, 0), var(--liquid-y, 0))
     scale(var(--liquid-scale-x, 1), var(--liquid-scale-y, 1)) !important;
-  filter: brightness(1.035);
+  filter: brightness(1.018);
+  touch-action: none;
   transition:
     transform 80ms linear,
     filter 120ms ease,
     box-shadow 140ms ease,
     background 160ms ease !important;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.34),
-    0 14px 32px rgba(15, 23, 42, 0.15) !important;
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 10px 22px rgba(15, 23, 42, 0.12) !important;
 }
 
 body[data-theme="liquid"] .liquid-release,
