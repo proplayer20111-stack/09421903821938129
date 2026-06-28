@@ -59,9 +59,6 @@ const profileName = $("#profileName");
 const profileFile = $("#profileFile");
 const saveProfileButton = $("#saveProfileButton");
 const joinButton = $("#joinButton");
-const notificationPanel = $("#notificationPanel");
-const notificationButton = $("#notificationButton");
-const notificationStatus = $("#notificationStatus");
 const leaveButton = $("#leaveButton");
 const muteButton = $("#muteButton");
 const shareScreenButton = $("#shareScreenButton");
@@ -302,7 +299,6 @@ clearChatButton.addEventListener("click", clearAllChatMessages);
 logoutButton.addEventListener("click", logout);
 saveProfileButton.addEventListener("click", saveProfile);
 joinButton.addEventListener("click", joinCall);
-notificationButton.addEventListener("click", requestCallNotifications);
 leaveButton.addEventListener("click", () => leaveCall());
 muteButton.addEventListener("click", toggleMute);
 shareScreenButton.addEventListener("click", toggleScreenShare);
@@ -386,7 +382,6 @@ document.addEventListener("touchend", (event) => {
 }, { passive: false });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
-    updateNotificationPanel();
     if (state.token && "Notification" in window && Notification.permission === "granted") enablePushNotifications();
     state.ttsAudioContext?.resume().catch(() => {});
     if (state.inCall) requestWakeLock();
@@ -762,7 +757,6 @@ function showCallScreen() {
   profileName.value = state.profile.name;
   renderAvatar(profilePreview, state.profile);
   rtcConfigPromise = loadRtcConfig();
-  updateNotificationPanel();
   if ("Notification" in window && Notification.permission === "granted") enablePushNotifications();
 }
 
@@ -893,7 +887,6 @@ function logout() {
   authName.value = "";
   authPassword.value = "";
   adminPanel.hidden = true;
-  notificationPanel.hidden = true;
   authScreen.hidden = false;
   callScreen.hidden = true;
   authName.focus();
@@ -4652,14 +4645,18 @@ async function notifyUser(title, body = "", sound = "soft", options = {}) {
 }
 
 function warmNotifications() {
-  updateNotificationPanel();
   if (!state.token || !supportsCallNotifications()) return;
   if (Notification.permission === "granted") {
     enablePushNotifications();
     return;
   }
   if (state.notificationWanted || Notification.permission !== "default") return;
-  notificationPanel.hidden = false;
+  state.notificationWanted = true;
+  Notification.requestPermission()
+    .then((permission) => {
+      if (permission === "granted") enablePushNotifications();
+    })
+    .catch(() => {});
 }
 
 async function registerNotificationWorker() {
@@ -4669,20 +4666,17 @@ async function registerNotificationWorker() {
   } catch {
     state.notificationRegistration = null;
   }
-  updateNotificationPanel();
 }
 
 async function enablePushNotifications(showTest = false) {
   if (state.pushSubscribing || !state.token || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
   state.pushSubscribing = true;
-  updateNotificationPanel("saving notifications...");
   try {
     const configResponse = await fetch("/api/push-config", { headers: siteHeaders() });
     const config = await configResponse.json();
     if (!configResponse.ok || !config.enabled || !config.publicKey) {
       state.notificationEnabled = false;
       state.notificationUnsupportedReason = "notifications are not enabled on this server";
-      updateNotificationPanel();
       return false;
     }
 
@@ -4717,44 +4711,13 @@ async function enablePushNotifications(showTest = false) {
         data: { url: location.href }
       });
     }
-    updateNotificationPanel();
     return true;
   } catch {
     state.notificationEnabled = false;
     state.notificationUnsupportedReason = "could not turn on notifications";
-    updateNotificationPanel();
     return false;
   } finally {
     state.pushSubscribing = false;
-    updateNotificationPanel();
-  }
-}
-
-async function requestCallNotifications() {
-  if (!state.token) return;
-  state.notificationWanted = true;
-  updateNotificationPanel("requesting permission...");
-
-  if (!supportsCallNotifications()) {
-    updateNotificationPanel();
-    return;
-  }
-
-  try {
-    let permission = Notification.permission;
-    if (permission === "default") permission = await Notification.requestPermission();
-    if (permission !== "granted") {
-      state.notificationEnabled = false;
-      updateNotificationPanel();
-      return;
-    }
-
-    const enabled = await enablePushNotifications();
-    showToast(enabled ? "call notifications enabled" : "notifications could not be enabled");
-  } catch {
-    state.notificationEnabled = false;
-    state.notificationUnsupportedReason = "could not turn on notifications";
-    updateNotificationPanel();
   }
 }
 
@@ -4773,53 +4736,6 @@ function supportsCallNotifications() {
     return false;
   }
   return true;
-}
-
-function updateNotificationPanel(statusText = "") {
-  if (!notificationPanel) return;
-  if (!state.token) {
-    notificationPanel.hidden = true;
-    return;
-  }
-
-  const supported = supportsCallNotifications();
-  const permission = "Notification" in window ? Notification.permission : "unsupported";
-  notificationPanel.hidden = false;
-  notificationButton.hidden = false;
-  notificationButton.disabled = state.pushSubscribing;
-
-  if (statusText) {
-    notificationStatus.textContent = statusText;
-    notificationButton.textContent = "enable";
-    return;
-  }
-
-  if (!supported) {
-    notificationStatus.textContent = state.notificationUnsupportedReason;
-    notificationButton.hidden = true;
-    return;
-  }
-
-  if (permission === "denied") {
-    notificationStatus.textContent = "notifications are blocked in browser settings";
-    notificationButton.hidden = true;
-    return;
-  }
-
-  if (permission === "granted" && state.notificationEnabled) {
-    notificationStatus.textContent = "call alerts are on for this device";
-    notificationButton.hidden = true;
-    return;
-  }
-
-  if (permission === "granted") {
-    notificationStatus.textContent = state.pushSubscribing ? "saving notifications..." : "finish turning on call alerts for this device";
-    notificationButton.textContent = "finish";
-    return;
-  }
-
-  notificationStatus.textContent = "get notified when someone starts a call";
-  notificationButton.textContent = "enable";
 }
 
 function urlBase64ToUint8Array(value) {
