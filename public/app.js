@@ -554,7 +554,7 @@ function loadTheme() {
   const mode = modes.has(saved?.mode) ? saved.mode : "white";
   const accents = new Set(["blue", "purple", "green", "red", "pink", "orange"]);
   const accent = accents.has(saved?.accent) ? saved.accent : "blue";
-  const background = typeof saved?.background === "string" && saved.background.startsWith("data:image/")
+  const background = isThemeBackgroundUrl(saved?.background)
     ? saved.background
     : "";
 
@@ -592,7 +592,17 @@ async function saveThemeBackground() {
   }
 
   try {
-    const background = await compressThemeBackground(file);
+    showToast("uploading background");
+    const form = new FormData();
+    form.append("file", file);
+    const response = await fetch(`${httpBase()}/api/upload-background`, {
+      method: "POST",
+      headers: siteHeaders(),
+      body: form
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "background upload failed");
+    const background = result.url;
     const previous = readSavedTheme();
     const mode = ["white", "black", "liquid"].includes(previous.mode) ? previous.mode : "liquid";
     const accent = ["blue", "purple", "green", "red", "pink", "orange"].includes(previous.accent) ? previous.accent : "blue";
@@ -601,8 +611,8 @@ async function saveThemeBackground() {
     themeAccent.value = accent;
     applyTheme(mode, accent, background);
     showToast("background saved");
-  } catch {
-    showToast("background image is too large");
+  } catch (error) {
+    showToast(error.message || "background upload failed");
   } finally {
     themeBackgroundFile.value = "";
   }
@@ -617,36 +627,9 @@ function clearThemeBackground() {
   showToast("background cleared");
 }
 
-function compressThemeBackground(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = reject;
-    reader.onload = () => {
-      const image = new Image();
-      image.onerror = reject;
-      image.onload = () => {
-        const maxSide = 1600;
-        const scale = Math.min(1, maxSide / Math.max(image.naturalWidth || 1, image.naturalHeight || 1));
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.max(1, Math.round((image.naturalWidth || 1) * scale));
-        canvas.height = Math.max(1, Math.round((image.naturalHeight || 1) * scale));
-        const context = canvas.getContext("2d");
-        if (!context) {
-          reject(new Error("canvas unavailable"));
-          return;
-        }
-        context.drawImage(image, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
-        if (dataUrl.length > 1600000) {
-          reject(new Error("background too large"));
-          return;
-        }
-        resolve(dataUrl);
-      };
-      image.src = String(reader.result || "");
-    };
-    reader.readAsDataURL(file);
-  });
+function isThemeBackgroundUrl(value) {
+  const text = String(value || "");
+  return text.startsWith("data:image/") || /^https:\/\/files\.catbox\.moe\/\S+$/i.test(text);
 }
 
 function applyTheme(mode, accent, background = "") {

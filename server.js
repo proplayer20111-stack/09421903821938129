@@ -243,6 +243,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/upload-background") {
+    if (!requireSiteAccess(req, res)) return;
+    await handleBackgroundUpload(req, res);
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/upload-media") {
     if (!requireSiteAccess(req, res)) return;
     await handleMediaUpload(req, res, url);
@@ -1683,6 +1689,28 @@ async function handleProfileUpload(req, res) {
     const busy = error.message === "Upload capacity reached.";
     sendJson(res, tooLarge ? 413 : badUpload ? 400 : busy ? 503 : 500, {
       error: tooLarge ? "That file is too large." : error.message || "Could not upload to Catbox."
+    });
+  } finally {
+    file?.release?.();
+  }
+}
+
+async function handleBackgroundUpload(req, res) {
+  let file = null;
+  try {
+    file = await readMediaFile(req);
+    if (!file.type.startsWith("image/")) {
+      sendJson(res, 400, { error: "Please upload an image." });
+      return;
+    }
+    const url = await uploadToCatbox(file);
+    sendJson(res, 200, { url, type: file.type });
+  } catch (error) {
+    const tooLarge = error.message === "Upload too large.";
+    const badUpload = ["Upload must be multipart form data.", "No file was uploaded.", "Please upload an image or video.", "Please upload an image."].includes(error.message);
+    const busy = error.message === "Upload capacity reached.";
+    sendJson(res, tooLarge ? 413 : badUpload ? 400 : busy ? 503 : 500, {
+      error: tooLarge ? "That file is too large." : error.message || "Could not upload background to Catbox."
     });
   } finally {
     file?.release?.();
