@@ -47,6 +47,8 @@ const profilePanel = $("#profilePanel");
 const themePanel = $("#themePanel");
 const themeMode = $("#themeMode");
 const themeAccent = $("#themeAccent");
+const themeBackgroundFile = $("#themeBackgroundFile");
+const clearThemeBackgroundButton = $("#clearThemeBackgroundButton");
 const adminPanel = $("#adminPanel");
 const chatEnabledToggle = $("#chatEnabledToggle");
 const clearChatButton = $("#clearChatButton");
@@ -292,6 +294,8 @@ directMediaPlayer.addEventListener("ended", handleDirectMediaEnded);
 directMediaPlayer.addEventListener("error", () => showToast("this media link could not be played"));
 themeMode.addEventListener("change", saveTheme);
 themeAccent.addEventListener("change", saveTheme);
+themeBackgroundFile.addEventListener("change", saveThemeBackground);
+clearThemeBackgroundButton.addEventListener("click", clearThemeBackground);
 adminButton.addEventListener("click", async () => {
   adminPanel.hidden = !adminPanel.hidden;
   if (!adminPanel.hidden) {
@@ -546,27 +550,110 @@ function loadTheme() {
     localStorage.removeItem(THEME_KEY);
   }
 
-  const mode = saved?.mode === "black" ? "black" : "white";
+  const modes = new Set(["white", "black", "liquid"]);
+  const mode = modes.has(saved?.mode) ? saved.mode : "white";
   const accents = new Set(["blue", "purple", "green", "red", "pink", "orange"]);
   const accent = accents.has(saved?.accent) ? saved.accent : "blue";
+  const background = typeof saved?.background === "string" && saved.background.startsWith("data:image/")
+    ? saved.background
+    : "";
 
   themeMode.value = mode;
   themeAccent.value = accent;
-  applyTheme(mode, accent);
+  applyTheme(mode, accent, background);
 }
 
 function saveTheme() {
-  const mode = themeMode.value === "black" ? "black" : "white";
+  const mode = ["white", "black", "liquid"].includes(themeMode.value) ? themeMode.value : "white";
   const accent = ["blue", "purple", "green", "red", "pink", "orange"].includes(themeAccent.value)
     ? themeAccent.value
     : "blue";
-  localStorage.setItem(THEME_KEY, JSON.stringify({ mode, accent }));
-  applyTheme(mode, accent);
+  const previous = readSavedTheme();
+  const background = typeof previous.background === "string" ? previous.background : "";
+  localStorage.setItem(THEME_KEY, JSON.stringify({ mode, accent, background }));
+  applyTheme(mode, accent, background);
 }
 
-function applyTheme(mode, accent) {
+function readSavedTheme() {
+  try {
+    return JSON.parse(localStorage.getItem(THEME_KEY) || "{}") || {};
+  } catch {
+    return {};
+  }
+}
+
+async function saveThemeBackground() {
+  const file = themeBackgroundFile.files?.[0];
+  if (!file) return;
+  if (!file.type.startsWith("image/")) {
+    showToast("pick an image");
+    themeBackgroundFile.value = "";
+    return;
+  }
+
+  try {
+    const background = await compressThemeBackground(file);
+    const previous = readSavedTheme();
+    const mode = ["white", "black", "liquid"].includes(previous.mode) ? previous.mode : "liquid";
+    const accent = ["blue", "purple", "green", "red", "pink", "orange"].includes(previous.accent) ? previous.accent : "blue";
+    localStorage.setItem(THEME_KEY, JSON.stringify({ mode, accent, background }));
+    themeMode.value = mode;
+    themeAccent.value = accent;
+    applyTheme(mode, accent, background);
+    showToast("background saved");
+  } catch {
+    showToast("background image is too large");
+  } finally {
+    themeBackgroundFile.value = "";
+  }
+}
+
+function clearThemeBackground() {
+  const previous = readSavedTheme();
+  const mode = ["white", "black", "liquid"].includes(previous.mode) ? previous.mode : themeMode.value;
+  const accent = ["blue", "purple", "green", "red", "pink", "orange"].includes(previous.accent) ? previous.accent : themeAccent.value;
+  localStorage.setItem(THEME_KEY, JSON.stringify({ mode, accent, background: "" }));
+  applyTheme(mode, accent, "");
+  showToast("background cleared");
+}
+
+function compressThemeBackground(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = () => {
+      const image = new Image();
+      image.onerror = reject;
+      image.onload = () => {
+        const maxSide = 1600;
+        const scale = Math.min(1, maxSide / Math.max(image.naturalWidth || 1, image.naturalHeight || 1));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round((image.naturalWidth || 1) * scale));
+        canvas.height = Math.max(1, Math.round((image.naturalHeight || 1) * scale));
+        const context = canvas.getContext("2d");
+        if (!context) {
+          reject(new Error("canvas unavailable"));
+          return;
+        }
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
+        if (dataUrl.length > 1600000) {
+          reject(new Error("background too large"));
+          return;
+        }
+        resolve(dataUrl);
+      };
+      image.src = String(reader.result || "");
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function applyTheme(mode, accent, background = "") {
   document.body.dataset.theme = mode;
   document.body.dataset.accent = accent;
+  document.documentElement.style.setProperty("--theme-bg-image", background ? `url("${background}")` : "none");
+  clearThemeBackgroundButton.hidden = !background;
 }
 
 function getBrowserDeviceId() {
