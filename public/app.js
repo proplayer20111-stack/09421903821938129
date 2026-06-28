@@ -244,7 +244,6 @@ const MOBILE_CALL_HEALTH_INTERVAL_MS = 12000;
 const DESKTOP_CALL_HEALTH_INTERVAL_MS = 6000;
 const MOBILE_METER_INTERVAL_MS = 260;
 const DESKTOP_METER_INTERVAL_MS = 55;
-const BACKGROUND_METER_INTERVAL_MS = 2500;
 const MOBILE_YOUTUBE_TIMER_MS = 1000;
 const DESKTOP_YOUTUBE_TIMER_MS = 500;
 let lastMobileTouchEnd = 0;
@@ -393,7 +392,7 @@ document.addEventListener("visibilitychange", () => {
     repairCallAudioAfterResume();
     if (state.token && (!state.ws || state.ws.readyState === WebSocket.CLOSED)) scheduleReconnect(0);
   } else {
-    if (state.inCall && state.analyser && !state.meterTimer) setupLocalAudioMeter();
+    stopAudioMeter();
   }
 });
 window.addEventListener("resize", () => {
@@ -881,7 +880,6 @@ function prepareCallAutoRejoin() {
 }
 
 function repairCallAudioAfterResume() {
-  updateMediaSession();
   state.ttsAudioContext?.resume().catch(() => {});
   state.audioContext?.resume?.().catch(() => {});
   state.remoteAudioContext?.resume?.().catch(() => {});
@@ -1681,7 +1679,6 @@ async function handleSignal(message) {
     state.id = message.id;
     state.inCall = true;
     updateTtsPanel();
-    updateMediaSession();
     startCallHealthMonitor();
     requestWakeLock();
     setupPanel.hidden = true;
@@ -3960,7 +3957,6 @@ function resetLocalCall(showMessage = true) {
   state.muted = false;
   state.ttsPanelOpen = false;
   state.lastSpeaking = false;
-  updateMediaSession();
   muteButton.setAttribute("aria-pressed", "false");
   muteButton.textContent = "mute";
   muteButton.disabled = false;
@@ -4048,7 +4044,7 @@ function setupLocalAudioMeter() {
       return;
     }
     if (document.visibilityState !== "visible") {
-      state.meterTimer = setTimeout(tick, BACKGROUND_METER_INTERVAL_MS);
+      stopAudioMeter();
       return;
     }
     state.analyser.getByteFrequencyData(samples);
@@ -4871,19 +4867,6 @@ async function requestWakeLock() {
     });
   } catch {
     state.wakeLock = null;
-  }
-}
-
-function updateMediaSession() {
-  try {
-    if (!("mediaSession" in navigator)) return;
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: state.inCall ? "Healthpack Squad call" : "Healthpack Squad",
-      artist: state.inCall ? "Live audio" : "Calling app",
-      album: "Healthpack Squad"
-    });
-    navigator.mediaSession.playbackState = state.inCall ? "playing" : "none";
-  } catch {
   }
 }
 

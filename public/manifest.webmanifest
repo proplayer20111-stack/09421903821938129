@@ -4,8 +4,6 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "orientation": "any",
-  "categories": ["social", "communication"],
   "background_color": "#ffffff",
   "theme_color": "#2563eb",
   "icons": [
