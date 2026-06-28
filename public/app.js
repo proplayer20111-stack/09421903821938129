@@ -230,7 +230,8 @@ const state = {
   onlineUsers: new Map(),
   chatIds: new Set(),
   originalTitle: document.title,
-  titleTimer: null
+  titleTimer: null,
+  liquidPointer: null
 };
 
 const rtcConfig = {
@@ -377,6 +378,10 @@ kickVotes.addEventListener("click", (event) => {
 document.addEventListener("click", (event) => {
   if (!volumeBackdrop.hidden && !volumeMenu.contains(event.target) && event.target !== volumeBackdrop) closeVolumeMenu();
 });
+document.addEventListener("pointerdown", startLiquidPointerStretch, { passive: true });
+document.addEventListener("pointermove", updateLiquidPointerStretch, { passive: true });
+document.addEventListener("pointerup", finishLiquidPointerStretch, { passive: true });
+document.addEventListener("pointercancel", finishLiquidPointerStretch, { passive: true });
 document.addEventListener("gesturestart", preventMobileZoom, { passive: false });
 document.addEventListener("gesturechange", preventMobileZoom, { passive: false });
 document.addEventListener("gestureend", preventMobileZoom, { passive: false });
@@ -641,6 +646,69 @@ function applyTheme(mode, accent, background = "") {
   document.body.dataset.accent = accent;
   document.documentElement.style.setProperty("--theme-bg-image", background ? `url("${background}")` : "none");
   clearThemeBackgroundButton.hidden = !background;
+}
+
+function isLiquidThemeActive() {
+  return document.body.dataset.theme === "liquid" || document.body.dataset.theme === "liquid-black";
+}
+
+function liquidInteractiveTarget(target) {
+  if (!isLiquidThemeActive()) return null;
+  const element = target?.closest?.("button:not(:disabled), .person, .bubble, .kick-card, .youtube-queue-item");
+  if (!element || element.closest(".volume-backdrop[hidden]")) return null;
+  return element;
+}
+
+function startLiquidPointerStretch(event) {
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  const element = liquidInteractiveTarget(event.target);
+  if (!element) return;
+  const rect = element.getBoundingClientRect();
+  state.liquidPointer = {
+    element,
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    width: Math.max(1, rect.width),
+    height: Math.max(1, rect.height)
+  };
+  element.classList.add("liquid-held");
+  element.style.setProperty("--liquid-x", "0px");
+  element.style.setProperty("--liquid-y", "0px");
+  element.style.setProperty("--liquid-scale-x", "1.035");
+  element.style.setProperty("--liquid-scale-y", "0.975");
+}
+
+function updateLiquidPointerStretch(event) {
+  const active = state.liquidPointer;
+  if (!active || active.pointerId !== event.pointerId || active.element.isConnected === false) return;
+  const maxX = Math.min(28, active.width * 0.10);
+  const maxY = Math.min(22, active.height * 0.16);
+  const dx = Math.max(-maxX, Math.min(maxX, (event.clientX - active.startX) * 0.38));
+  const dy = Math.max(-maxY, Math.min(maxY, (event.clientY - active.startY) * 0.38));
+  const stretchX = 1 + Math.min(0.075, Math.abs(dx) / Math.max(120, active.width * 3));
+  const stretchY = 1 + Math.min(0.065, Math.abs(dy) / Math.max(120, active.height * 4));
+  active.element.style.setProperty("--liquid-x", `${dx}px`);
+  active.element.style.setProperty("--liquid-y", `${dy}px`);
+  active.element.style.setProperty("--liquid-scale-x", String(stretchX));
+  active.element.style.setProperty("--liquid-scale-y", String(Math.max(0.94, 1 / stretchY)));
+}
+
+function finishLiquidPointerStretch(event) {
+  const active = state.liquidPointer;
+  if (!active || active.pointerId !== event.pointerId) return;
+  state.liquidPointer = null;
+  const element = active.element;
+  if (!element?.isConnected) return;
+  element.classList.remove("liquid-held");
+  element.classList.add("liquid-release");
+  setTimeout(() => {
+    element.classList.remove("liquid-release");
+    element.style.removeProperty("--liquid-x");
+    element.style.removeProperty("--liquid-y");
+    element.style.removeProperty("--liquid-scale-x");
+    element.style.removeProperty("--liquid-scale-y");
+  }, 360);
 }
 
 function getBrowserDeviceId() {
