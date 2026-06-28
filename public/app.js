@@ -70,6 +70,7 @@ const callControls = $("#callControls");
 const participants = $("#participants");
 const connectionState = $("#connectionState");
 const micStatus = $("#micStatus");
+const ttsToggleButton = $("#ttsToggleButton");
 const ttsPanel = $("#ttsPanel");
 const ttsForm = $("#ttsForm");
 const ttsInput = $("#ttsInput");
@@ -186,6 +187,7 @@ const state = {
   ttsAudioSource: null,
   ttsStartTimer: null,
   ttsLoading: false,
+  ttsPanelOpen: false,
   ttsSpeakerId: null,
   serverClockOffset: 0,
   hasServerClockOffset: false,
@@ -304,6 +306,7 @@ notificationButton.addEventListener("click", requestCallNotifications);
 leaveButton.addEventListener("click", () => leaveCall());
 muteButton.addEventListener("click", toggleMute);
 shareScreenButton.addEventListener("click", toggleScreenShare);
+ttsToggleButton.addEventListener("click", toggleTtsPanel);
 participants.addEventListener("click", (event) => {
   const enlarge = event.target.closest(".screen-share-enlarge");
   if (enlarge) {
@@ -3521,6 +3524,7 @@ function toggleMute() {
   state.muted = !state.muted;
   if (state.muted) unlockTtsAudio();
   if (!state.muted) {
+    state.ttsPanelOpen = false;
     stopTtsAudio();
     if (state.ttsSpeakerId) setSpeaking(state.ttsSpeakerId, false);
     state.ttsSpeakerId = null;
@@ -3863,6 +3867,7 @@ function resetLocalCall(showMessage = true) {
   joinButton.disabled = false;
   state.inCall = false;
   state.muted = false;
+  state.ttsPanelOpen = false;
   state.lastSpeaking = false;
   muteButton.setAttribute("aria-pressed", "false");
   muteButton.textContent = "mute";
@@ -4068,9 +4073,20 @@ async function requestTextToSpeech(text) {
 
 function updateTtsPanel() {
   const available = state.inCall && state.muted;
-  ttsPanel.hidden = !available;
-  ttsInput.disabled = !available;
+  if (!available) state.ttsPanelOpen = false;
+  ttsToggleButton.hidden = !available;
+  ttsToggleButton.textContent = state.ttsPanelOpen ? "close text to speech" : "text to speech";
+  ttsToggleButton.setAttribute("aria-expanded", String(available && state.ttsPanelOpen));
+  ttsPanel.hidden = !available || !state.ttsPanelOpen;
+  ttsInput.disabled = !available || !state.ttsPanelOpen;
   ttsButton.disabled = !available || state.ttsLoading;
+}
+
+function toggleTtsPanel() {
+  if (!state.inCall || !state.muted) return;
+  state.ttsPanelOpen = !state.ttsPanelOpen;
+  updateTtsPanel();
+  if (state.ttsPanelOpen) ttsInput.focus();
 }
 
 function unlockTtsAudio() {
