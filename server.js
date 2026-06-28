@@ -34,6 +34,7 @@ const ACCOUNTS_PATH = path.join(DATA_DIR, "accounts.json");
 const DEVICE_RULES_PATH = path.join(DATA_DIR, "device-rules.json");
 const CHAT_PATH = path.join(DATA_DIR, "chat-messages.json");
 const CHAT_SETTINGS_PATH = path.join(DATA_DIR, "chat-settings.json");
+const PUSH_SUBSCRIPTIONS_PATH = path.join(DATA_DIR, "push-subscriptions.json");
 const rooms = new Map();
 const sessions = new Map();
 const siteSessions = new Map();
@@ -62,7 +63,7 @@ const mediaDiscoveryClients = new Set();
 const kickVotes = new Map();
 const callKicks = new Map();
 const voteKickCooldowns = new Map();
-const pushSubscriptions = new Map();
+const pushSubscriptions = loadPushSubscriptions();
 const ttsCooldowns = new Map();
 let accounts = loadAccounts();
 let databasePool = null;
@@ -135,6 +136,7 @@ const mimeTypes = {
   ".jpeg": "image/jpeg",
   ".webm": "video/webm",
   ".mp4": "video/mp4",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
   ".svg": "image/svg+xml; charset=utf-8"
 };
 
@@ -1812,6 +1814,7 @@ async function handlePushSubscribe(req, res) {
     while (pushSubscriptions.size > MAX_PUSH_SUBSCRIPTIONS) {
       pushSubscriptions.delete(pushSubscriptions.keys().next().value);
     }
+    savePushSubscriptions();
     sendJson(res, 200, { ok: true });
   } catch {
     sendJson(res, 400, { error: "could not save push subscription" });
@@ -1927,7 +1930,10 @@ function sendCallStartedPush(starter) {
   for (const [endpoint, item] of [...pushSubscriptions.entries()]) {
     if (item.username === starter.account) continue;
     webPush.sendNotification(item.subscription, payload).catch((error) => {
-      if ([404, 410].includes(error?.statusCode)) pushSubscriptions.delete(endpoint);
+      if ([404, 410].includes(error?.statusCode)) {
+        pushSubscriptions.delete(endpoint);
+        savePushSubscriptions();
+      }
     });
   }
 }
@@ -2563,7 +2569,9 @@ function protectRuntimeResources() {
   pruneMapByAge(siteSessions, now, 24 * 60 * 60 * 1000, (value) => value?.createdAt);
   pruneMapByAge(mediaCooldowns, now, 5 * 60 * 1000, (value) => value);
   pruneMapByAge(ttsCooldowns, now, 5 * 60 * 1000, (value) => value);
-  pruneMapByAge(pushSubscriptions, now, PUSH_TTL_MS, (value) => value?.updatedAt);
+  if (pruneMapByAge(pushSubscriptions, now, PUSH_TTL_MS, (value) => value?.updatedAt)) {
+    savePushSubscriptions();
+  }
 
   for (const [ip, attempt] of accessAttempts) {
     if (!attempt.lockedUntil || attempt.lockedUntil < now - ACCESS_TIMEOUT_MS) accessAttempts.delete(ip);
@@ -2590,10 +2598,15 @@ function protectRuntimeResources() {
 }
 
 function pruneMapByAge(map, now, ttl, getTimestamp) {
+  let changed = false;
   for (const [key, value] of map) {
     const timestamp = Number(getTimestamp(value)) || 0;
-    if (!timestamp || timestamp < now - ttl) map.delete(key);
+    if (!timestamp || timestamp < now - ttl) {
+      map.delete(key);
+      changed = true;
+    }
   }
+  return changed;
 }
 
 function readJson(req) {
@@ -2637,6 +2650,46 @@ function loadChatSettings() {
   } catch {
     return { enabled: true };
   }
+}
+
+function loadPushSubscriptions() {
+  try {
+    return hydratePushSubscriptions(JSON.parse(fs.readFileSync(PUSH_SUBSCRIPTIONS_PATH, "utf8")));
+  } catch {
+    return new Map();
+  }
+}
+
+function hydratePushSubscriptions(value) {
+  const items = Array.isArray(value) ? value : [];
+  const subscriptions = new Map();
+  for (const item of items) {
+    const endpoint = String(item?.endpoint || item?.subscription?.endpoint || "");
+    if (!endpoint || !item?.subscription?.keys?.p256dh || !item?.subscription?.keys?.auth) continue;
+    subscriptions.set(endpoint, {
+      username: String(item.username || ""),
+      deviceId: String(item.deviceId || ""),
+      subscription: item.subscription,
+      updatedAt: Number(item.updatedAt) || Date.now()
+    });
+  }
+  return subscriptions;
+}
+
+function serializePushSubscriptions() {
+  return [...pushSubscriptions.entries()].map(([endpoint, item]) => ({
+    endpoint,
+    username: item.username,
+    deviceId: item.deviceId,
+    subscription: item.subscription,
+    updatedAt: item.updatedAt
+  }));
+}
+
+function savePushSubscriptions() {
+  const items = serializePushSubscriptions();
+  fs.promises.writeFile(PUSH_SUBSCRIPTIONS_PATH, JSON.stringify(items)).catch(() => {});
+  queueDatabaseSave("push-subscriptions", items);
 }
 
 function saveChatSettings() {
@@ -2694,7 +2747,7 @@ async function initializeDatabaseStorage() {
 
   const result = await databasePool.query(
     "SELECT key, value FROM app_state WHERE key = ANY($1::text[])",
-    [["accounts", "device-rules", "chat-messages", "chat-settings"]]
+    [["accounts", "device-rules", "chat-messages", "chat-settings", "push-subscriptions"]]
   );
   const stored = new Map(result.rows.map((row) => [row.key, row.value]));
 
@@ -2736,6 +2789,16 @@ async function initializeDatabaseStorage() {
     fs.writeFileSync(CHAT_SETTINGS_PATH, JSON.stringify({ enabled: chatEnabled }));
   } else {
     await saveDatabaseState("chat-settings", { enabled: chatEnabled });
+  }
+
+  if (stored.has("push-subscriptions")) {
+    pushSubscriptions.clear();
+    for (const [endpoint, item] of hydratePushSubscriptions(stored.get("push-subscriptions"))) {
+      pushSubscriptions.set(endpoint, item);
+    }
+    fs.writeFileSync(PUSH_SUBSCRIPTIONS_PATH, JSON.stringify(serializePushSubscriptions()));
+  } else {
+    await saveDatabaseState("push-subscriptions", serializePushSubscriptions());
   }
 
   console.log("Permanent Neon/Postgres storage connected.");

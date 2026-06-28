@@ -3,7 +3,12 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#2563eb">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Healthpack Squad">
     <title>Healthpack Squad</title>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="apple-touch-icon" href="/icon.svg">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
@@ -106,6 +111,14 @@
             <div class="join-row" id="setupPanel">
               <button class="blue" id="joinButton" type="button">Join call</button>
             </div>
+
+            <section class="notification-panel" id="notificationPanel" hidden>
+              <div>
+                <h2>Call notifications</h2>
+                <p id="notificationStatus">Get notified when someone starts a call.</p>
+              </div>
+              <button class="small" id="notificationButton" type="button">enable</button>
+            </section>
 
             <div class="status" id="connectionState" hidden>offline</div>
             <div class="mic-status" id="micStatus">mic not joined</div>
