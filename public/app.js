@@ -240,6 +240,13 @@ const SCREEN_RELAY_FRAME_INTERVAL_MS = 50;
 const SCREEN_RELAY_MAX_FRAME_BYTES = 256 * 1024;
 const SCREEN_RELAY_MAX_BUFFERED_BYTES = 512 * 1024;
 const SCREEN_SHARING_ENABLED = false;
+const MOBILE_CALL_HEALTH_INTERVAL_MS = 12000;
+const DESKTOP_CALL_HEALTH_INTERVAL_MS = 6000;
+const MOBILE_METER_INTERVAL_MS = 260;
+const DESKTOP_METER_INTERVAL_MS = 55;
+const BACKGROUND_METER_INTERVAL_MS = 2500;
+const MOBILE_YOUTUBE_TIMER_MS = 1000;
+const DESKTOP_YOUTUBE_TIMER_MS = 500;
 let lastMobileTouchEnd = 0;
 let lastMobileTouchTarget = null;
 let visualViewportFrame = null;
@@ -386,7 +393,7 @@ document.addEventListener("visibilitychange", () => {
     repairCallAudioAfterResume();
     if (state.token && (!state.ws || state.ws.readyState === WebSocket.CLOSED)) scheduleReconnect(0);
   } else {
-    stopAudioMeter();
+    if (state.inCall && state.analyser && !state.meterTimer) setupLocalAudioMeter();
   }
 });
 window.addEventListener("resize", () => {
@@ -874,6 +881,7 @@ function prepareCallAutoRejoin() {
 }
 
 function repairCallAudioAfterResume() {
+  updateMediaSession();
   state.ttsAudioContext?.resume().catch(() => {});
   state.audioContext?.resume?.().catch(() => {});
   state.remoteAudioContext?.resume?.().catch(() => {});
@@ -1673,6 +1681,7 @@ async function handleSignal(message) {
     state.id = message.id;
     state.inCall = true;
     updateTtsPanel();
+    updateMediaSession();
     startCallHealthMonitor();
     requestWakeLock();
     setupPanel.hidden = true;
@@ -1912,7 +1921,7 @@ function startCallHealthMonitor() {
   stopCallHealthMonitor();
   state.callHealthTimer = setInterval(() => {
     for (const peer of state.peers.values()) checkPeerHealth(peer);
-  }, state.deviceType === "mobile" ? 8000 : 6000);
+  }, state.deviceType === "mobile" ? MOBILE_CALL_HEALTH_INTERVAL_MS : DESKTOP_CALL_HEALTH_INTERVAL_MS);
 }
 
 function stopCallHealthMonitor() {
@@ -2232,9 +2241,15 @@ function renderAvatar(target, profile) {
 
   if (cleanProfile.avatarUrl) {
     const isVideo = cleanProfile.avatarType.startsWith("video/");
+    if (isVideo && state.deviceType === "mobile") {
+      target.textContent = initials(cleanProfile.name);
+      target.title = cleanProfile.name;
+      return;
+    }
     const media = document.createElement(isVideo ? "video" : "img");
     media.src = cleanProfile.avatarUrl;
     media.alt = "";
+    if (!isVideo) media.loading = "lazy";
     if (isVideo) {
       media.autoplay = state.deviceType !== "mobile";
       media.loop = true;
@@ -2543,6 +2558,7 @@ function reconcileDirectMedia(force = false) {
   if (state.directMediaUrl !== state.youtube.url) {
     state.directMediaUrl = state.youtube.url;
     state.directMediaApplying = true;
+    directMediaPlayer.preload = state.deviceType === "mobile" ? "none" : "metadata";
     directMediaPlayer.src = state.youtube.url;
     directMediaPlayer.load();
     setTimeout(() => {
@@ -2871,7 +2887,7 @@ function startYoutubeTimers() {
       if (youtubePanel.hidden) return;
       updateYoutubeTimeline();
       if (!state.youtubeSeeking) reconcileYoutubePlayer();
-    }, 500);
+    }, state.deviceType === "mobile" ? MOBILE_YOUTUBE_TIMER_MS : DESKTOP_YOUTUBE_TIMER_MS);
   }
 }
 
@@ -3944,6 +3960,7 @@ function resetLocalCall(showMessage = true) {
   state.muted = false;
   state.ttsPanelOpen = false;
   state.lastSpeaking = false;
+  updateMediaSession();
   muteButton.setAttribute("aria-pressed", "false");
   muteButton.textContent = "mute";
   muteButton.disabled = false;
@@ -4031,7 +4048,7 @@ function setupLocalAudioMeter() {
       return;
     }
     if (document.visibilityState !== "visible") {
-      state.meterTimer = setTimeout(tick, 750);
+      state.meterTimer = setTimeout(tick, BACKGROUND_METER_INTERVAL_MS);
       return;
     }
     state.analyser.getByteFrequencyData(samples);
@@ -4044,7 +4061,7 @@ function setupLocalAudioMeter() {
       state.lastSpeakingSentAt = now;
       send({ type: "speaking", speaking });
     }
-    state.meterTimer = setTimeout(tick, state.deviceType === "mobile" ? 120 : 55);
+    state.meterTimer = setTimeout(tick, state.deviceType === "mobile" ? MOBILE_METER_INTERVAL_MS : DESKTOP_METER_INTERVAL_MS);
   };
 
   tick();
@@ -4854,6 +4871,19 @@ async function requestWakeLock() {
     });
   } catch {
     state.wakeLock = null;
+  }
+}
+
+function updateMediaSession() {
+  try {
+    if (!("mediaSession" in navigator)) return;
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: state.inCall ? "Healthpack Squad call" : "Healthpack Squad",
+      artist: state.inCall ? "Live audio" : "Calling app",
+      album: "Healthpack Squad"
+    });
+    navigator.mediaSession.playbackState = state.inCall ? "playing" : "none";
+  } catch {
   }
 }
 

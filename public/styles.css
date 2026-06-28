@@ -1618,14 +1618,15 @@ body[data-layout="mobile"] #shareScreenButton {
   }
 
   .chat-log {
-    height: min(48dvh, 430px);
-    min-height: 260px;
+    height: min(42dvh, 360px);
+    min-height: 220px;
     padding: 7px;
   }
 
   .chat-entry {
-    content-visibility: visible;
-    contain: none;
+    content-visibility: auto;
+    contain-intrinsic-size: 72px;
+    contain: layout paint style;
   }
 
   .chat-media {
