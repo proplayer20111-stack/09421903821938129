@@ -693,13 +693,11 @@ body[data-layout="mobile"] #shareScreenButton {
   position: absolute;
   inset: 0;
   z-index: 2;
-  display: grid;
-  place-items: end center;
-  padding: 18px;
-  color: #ffffff;
-  background: linear-gradient(transparent 62%, rgba(0, 0, 0, 0.76));
-  font-size: 12px;
-  text-align: center;
+  display: block;
+  padding: 0;
+  background: transparent;
+  color: transparent;
+  font-size: 0;
   pointer-events: auto;
 }
 
@@ -1226,9 +1224,12 @@ body[data-layout="mobile"] #shareScreenButton {
 
 .controls {
   justify-content: center;
+  flex-wrap: wrap;
 }
 
 .tts-panel {
+  width: 100%;
+  max-width: 100%;
   border: 1px solid var(--line);
   background: color-mix(in srgb, var(--soft) 64%, var(--panel));
   padding: 14px;
@@ -1253,6 +1254,7 @@ body[data-layout="mobile"] #shareScreenButton {
 .tts-form input {
   width: 100%;
   min-width: 0;
+  max-width: 100%;
   border-color: var(--line);
 }
 
@@ -1661,6 +1663,23 @@ body[data-layout="mobile"] #shareScreenButton {
 
   .tts-form {
     grid-template-columns: 1fr;
+  }
+
+  #ttsToggleButton {
+    flex: 1 1 150px;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .tts-panel {
+    padding: 10px;
+    margin-top: 8px;
+    overflow: hidden;
+  }
+
+  .tts-panel h2 {
+    margin-bottom: 8px;
+    font-size: 16px;
   }
 
   .tts-form button {

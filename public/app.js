@@ -2448,9 +2448,7 @@ function renderYoutubeRoom() {
   const owner = isYoutubeController();
   youtubeControls.hidden = !active || !owner;
   youtubePlayerLock.hidden = !active || owner;
-  youtubePlayerLock.textContent = active && !owner
-    ? `${state.youtube.controllerName || state.youtube.controller} is in control`
-    : "";
+  youtubePlayerLock.textContent = "";
   youtubeResumeButton.hidden = !active || state.youtube.kind !== "youtube" || !state.youtubeNeedsResume;
   youtubeOwner.textContent = active
     ? owner
@@ -4109,7 +4107,7 @@ async function sendChat(event) {
 
 async function submitTextToSpeech(event) {
   event.preventDefault();
-  const text = ttsInput.value.trim();
+  const text = ttsInput.value.trim().slice(0, 40);
   if (!text || state.ttsLoading) return;
   if (!state.inCall || !state.muted) {
     showToast("mute first to use text to speech");
