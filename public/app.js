@@ -383,9 +383,7 @@ document.addEventListener("touchend", (event) => {
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
     if (state.token && "Notification" in window && Notification.permission === "granted") enablePushNotifications();
-    state.ttsAudioContext?.resume().catch(() => {});
-    if (state.inCall) requestWakeLock();
-    if (state.inCall && state.analyser && !state.meterTimer) setupLocalAudioMeter();
+    repairCallAudioAfterResume();
     if (state.token && (!state.ws || state.ws.readyState === WebSocket.CLOSED)) scheduleReconnect(0);
   } else {
     stopAudioMeter();
@@ -401,13 +399,16 @@ window.addEventListener("beforeunload", () => {
   sendLeaveNow();
   if (state.ws?.readyState === WebSocket.OPEN) state.ws.close();
 });
-window.addEventListener("pagehide", () => {
-  state.manualDisconnect = true;
-  sendLeaveNow();
-  if (state.ws?.readyState === WebSocket.OPEN) state.ws.close();
+window.addEventListener("pagehide", (event) => {
+  if (event.persisted) {
+    state.manualDisconnect = false;
+    return;
+  }
+  state.autoRejoin = state.inCall || state.autoRejoin;
 });
 window.addEventListener("pageshow", () => {
   state.manualDisconnect = false;
+  repairCallAudioAfterResume();
   if (state.token && (!state.ws || state.ws.readyState === WebSocket.CLOSED)) scheduleReconnect(0);
 });
 window.addEventListener("online", recoverAllPeerConnections);
@@ -811,9 +812,10 @@ function connectPresence() {
     state.screenRelayViewers = 0;
     stopScreenRelayProducer();
     cleanupPeerConnections();
+    stopCallHealthMonitor();
     state.ws = null;
     if (!state.manualDisconnect && state.token) {
-      state.autoRejoin = wasInCall || state.autoRejoin;
+      if (wasInCall) prepareCallAutoRejoin();
       scheduleReconnect();
     }
   });
@@ -858,6 +860,46 @@ function maybeAutoRejoin() {
   setTimeout(() => {
     if (!state.inCall && state.ws?.readyState === WebSocket.OPEN) joinCall();
   }, 400);
+}
+
+function prepareCallAutoRejoin() {
+  state.autoRejoin = true;
+  state.inCall = false;
+  state.ttsPanelOpen = false;
+  state.lastSpeaking = false;
+  updateTtsPanel();
+  updateScreenShareButton();
+  micStatus.textContent = "reconnecting audio";
+  micStatus.className = "mic-status";
+}
+
+function repairCallAudioAfterResume() {
+  state.ttsAudioContext?.resume().catch(() => {});
+  state.audioContext?.resume?.().catch(() => {});
+  state.remoteAudioContext?.resume?.().catch(() => {});
+
+  if (!state.inCall) return;
+  requestWakeLock();
+  if (state.analyser && !state.meterTimer) setupLocalAudioMeter();
+
+  const rawTrack = state.rawStream?.getAudioTracks()[0];
+  const sendTrack = state.stream?.getAudioTracks()[0];
+  if (!rawTrack || rawTrack.readyState === "ended" || !sendTrack || sendTrack.readyState === "ended") {
+    recoverMicrophone();
+  } else if (state.micGain) {
+    state.micGain.gain.value = state.muted ? 0 : 1;
+  }
+
+  for (const peer of state.peers.values()) {
+    peer.audio?.play().catch(() => {});
+    if (["failed", "disconnected", "closed"].includes(peer.connection.connectionState)) {
+      recoverPeerConnection(peer);
+    }
+  }
+
+  setTimeout(() => {
+    if (state.inCall) recoverAllPeerConnections();
+  }, 900);
 }
 
 function logout() {
@@ -1240,6 +1282,7 @@ async function requestMicrophone() {
   }
 
   try {
+    releaseMicrophonePipeline();
     state.rawStream = await getMicrophoneStream();
     await tuneMicTrack(state.rawStream.getAudioTracks()[0]);
     state.stream = createProcessedMicStream(state.rawStream);
@@ -1281,6 +1324,20 @@ async function getMicrophoneStream() {
     }
     throw error;
   }
+}
+
+function releaseMicrophonePipeline() {
+  stopAudioMeter();
+  state.stream?.getTracks().forEach((track) => track.stop());
+  state.rawStream?.getTracks().forEach((track) => track.stop());
+  if (state.audioContext?.state !== "closed") state.audioContext?.close().catch(() => {});
+  state.stream = null;
+  state.rawStream = null;
+  state.audioContext = null;
+  state.audioSource = null;
+  state.micGain = null;
+  state.audioDestination = null;
+  state.analyser = null;
 }
 
 async function tuneMicTrack(track) {
@@ -1344,11 +1401,18 @@ async function recoverMicrophone() {
     if (state.micGain) state.micGain.gain.value = state.muted ? 0 : 1;
 
     for (const peer of state.peers.values()) {
+      let replaced = false;
       for (const sender of peer.connection.getSenders()) {
         if (sender.track?.kind === "audio") {
           await sender.replaceTrack(nextTrack);
           await tuneAudioSender(sender);
+          replaced = true;
         }
+      }
+      if (!replaced && peer.connection.connectionState !== "closed") {
+        const sender = peer.connection.addTrack(nextTrack, state.stream);
+        await tuneAudioSender(sender);
+        negotiatePeer(peer);
       }
     }
 
@@ -1861,12 +1925,30 @@ async function checkPeerHealth(peer) {
   try {
     const stats = await peer.connection.getStats();
     let inbound = null;
+    let outbound = null;
     let remoteInbound = null;
     stats.forEach((report) => {
       if (report.type === "inbound-rtp" && report.kind === "audio" && !report.isRemote) inbound = report;
+      if (report.type === "outbound-rtp" && report.kind === "audio" && !report.isRemote) outbound = report;
       if (report.type === "remote-inbound-rtp" && report.kind === "audio") remoteInbound = report;
     });
-    if (!inbound) return;
+    const outboundBytes = Number(outbound?.bytesSent || 0);
+    if (outbound && peer.lastOutboundBytes !== null && outboundBytes <= peer.lastOutboundBytes && !state.muted && state.hasMic) {
+      peer.outboundStalledSamples += 1;
+    } else {
+      peer.outboundStalledSamples = 0;
+    }
+    if (outbound) peer.lastOutboundBytes = outboundBytes;
+    if (peer.outboundStalledSamples >= 3) {
+      peer.outboundStalledSamples = 0;
+      await recoverMicrophone();
+      recoverPeerConnection(peer);
+      return;
+    }
+    if (!inbound) {
+      await setPeerAudioBitrate(peer, false);
+      return;
+    }
     if (peer.lastInboundPackets === null) {
       peer.lastInboundPackets = Number(inbound.packetsReceived || 0);
       peer.lastInboundLost = Number(inbound.packetsLost || 0);
@@ -1962,6 +2044,8 @@ async function ensurePeer(peerInfo) {
     lastInboundBytes: null,
     lastConcealedSamples: null,
     lastTotalSamples: null,
+    lastOutboundBytes: null,
+    outboundStalledSamples: 0,
     currentBitrate: null
   };
   state.peers.set(peerInfo.id, peer);
