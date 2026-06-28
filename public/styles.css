@@ -120,10 +120,25 @@ body::before {
   background-position: center;
 }
 
+body[data-theme="liquid-black"]::before {
+  background-image:
+    var(--theme-bg-image),
+    radial-gradient(circle at 18% 12%, rgba(75, 85, 99, 0.82), transparent 34%),
+    radial-gradient(circle at 82% 18%, rgba(30, 41, 59, 0.88), transparent 36%),
+    radial-gradient(circle at 50% 92%, rgba(17, 24, 39, 0.92), transparent 42%),
+    linear-gradient(135deg, #020617, #111827 46%, #3f3f46);
+}
+
 body::after {
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.08)),
     radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.42), transparent 42%);
+}
+
+body[data-theme="liquid-black"]::after {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(0, 0, 0, 0.30)),
+    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.10), transparent 38%);
 }
 
 body > * {
@@ -289,6 +304,49 @@ body[data-theme="liquid-black"] button.small {
   border-color: rgba(255, 255, 255, 0.16);
   background-color: rgba(15, 23, 42, 0.46);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+body[data-theme="liquid"] .box,
+body[data-theme="liquid"] .chat-panel,
+body[data-theme="liquid"] .people,
+body[data-theme="liquid"] .profile-row,
+body[data-theme="liquid"] .admin-panel,
+body[data-theme="liquid"] .youtube-panel,
+body[data-theme="liquid"] .tts-panel {
+  text-shadow: 0 1px 10px rgba(255, 255, 255, 0.62);
+}
+
+body[data-theme="liquid"] .bubble {
+  color: #020617;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.46)),
+    rgba(255, 255, 255, 0.54);
+  border-color: rgba(255, 255, 255, 0.70);
+}
+
+body[data-theme="liquid"] .bubble.mine {
+  color: #ffffff;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.28);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+body[data-theme="liquid-black"] .bubble {
+  color: #f8fafc;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(15, 23, 42, 0.54)),
+    rgba(15, 23, 42, 0.52);
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 10px 24px rgba(0, 0, 0, 0.22);
+}
+
+body[data-theme="liquid-black"] .bubble.mine {
+  color: #ffffff;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent-fill) 88%, white 12%), var(--accent)),
+    rgba(37, 99, 235, 0.78);
+  border-color: rgba(255, 255, 255, 0.16);
 }
 
 .app-box {
@@ -847,10 +905,10 @@ body[data-layout="mobile"] #shareScreenButton {
 
 body[data-theme="liquid"] {
   --bg: #dbeafe;
-  --panel: rgba(255, 255, 255, 0.34);
-  --panel-strong: rgba(255, 255, 255, 0.48);
-  --text: #071427;
-  --muted: rgba(32, 49, 72, 0.78);
+  --panel: rgba(255, 255, 255, 0.48);
+  --panel-strong: rgba(255, 255, 255, 0.68);
+  --text: #020617;
+  --muted: rgba(15, 23, 42, 0.88);
   --soft: rgba(255, 255, 255, 0.32);
   --light: rgba(255, 255, 255, 0.42);
   --line: rgba(255, 255, 255, 0.72);
@@ -864,10 +922,10 @@ body[data-theme="liquid"] {
 
 body[data-theme="liquid-black"] {
   --bg: #020617;
-  --panel: rgba(8, 13, 25, 0.42);
-  --panel-strong: rgba(15, 23, 42, 0.58);
+  --panel: rgba(8, 13, 25, 0.54);
+  --panel-strong: rgba(15, 23, 42, 0.72);
   --text: #f8fafc;
-  --muted: rgba(226, 232, 240, 0.76);
+  --muted: rgba(226, 232, 240, 0.84);
   --soft: rgba(15, 23, 42, 0.48);
   --light: rgba(30, 41, 59, 0.50);
   --line: rgba(255, 255, 255, 0.28);
@@ -1704,6 +1762,12 @@ body[data-theme="liquid-black"] {
   body[data-theme="liquid-black"] .tts-panel {
     backdrop-filter: blur(18px) saturate(1.45) !important;
     -webkit-backdrop-filter: blur(18px) saturate(1.45) !important;
+  }
+
+  body[data-theme="liquid"] .bubble,
+  body[data-theme="liquid-black"] .bubble {
+    backdrop-filter: blur(14px) saturate(1.25) !important;
+    -webkit-backdrop-filter: blur(14px) saturate(1.25) !important;
   }
 
   html,
