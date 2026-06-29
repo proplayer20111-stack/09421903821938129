@@ -224,11 +224,36 @@ body[data-theme="liquid-black"]::before {
   will-change: transform;
 }
 
+body.has-theme-background::before {
+  inset: -10vmax;
+  opacity: 1;
+  filter: blur(2px) saturate(1.04);
+  transform: translateZ(0) scale(1.01);
+  background-attachment: fixed, fixed, fixed, fixed, fixed;
+  background-size: cover, 80vmax 80vmax, 78vmax 78vmax, 88vmax 88vmax, cover;
+}
+
 body[data-theme="liquid"]::after,
 body[data-theme="liquid-black"]::after {
   inset: -6vmax;
   opacity: 1;
   background-attachment: fixed, fixed;
+}
+
+body.has-theme-background::after {
+  inset: -6vmax;
+  opacity: 1;
+  background-attachment: fixed, fixed;
+}
+
+body.has-theme-background:not([data-theme="liquid"]):not([data-theme="liquid-black"]) .box,
+body.has-theme-background:not([data-theme="liquid"]):not([data-theme="liquid-black"]) .people,
+body.has-theme-background:not([data-theme="liquid"]):not([data-theme="liquid-black"]) .chat-panel,
+body.has-theme-background:not([data-theme="liquid"]):not([data-theme="liquid-black"]) .chat-log,
+body.has-theme-background:not([data-theme="liquid"]):not([data-theme="liquid-black"]) .youtube-panel,
+body.has-theme-background:not([data-theme="liquid"]):not([data-theme="liquid-black"]) .tts-panel,
+body.has-theme-background:not([data-theme="liquid"]):not([data-theme="liquid-black"]) .admin-panel {
+  background-color: color-mix(in srgb, var(--panel) 76%, transparent);
 }
 
 button,
@@ -2695,14 +2720,47 @@ body[data-theme="liquid-black"] {
   body[data-theme="liquid-black"] .volume-menu,
   body[data-theme="liquid-black"] .youtube-panel,
   body[data-theme="liquid-black"] .tts-panel {
-    backdrop-filter: blur(18px) saturate(1.45) !important;
-    -webkit-backdrop-filter: blur(18px) saturate(1.45) !important;
+    backdrop-filter: blur(7px) saturate(1.12) !important;
+    -webkit-backdrop-filter: blur(7px) saturate(1.12) !important;
   }
 
   body[data-theme="liquid"] .bubble,
   body[data-theme="liquid-black"] .bubble {
-    backdrop-filter: blur(14px) saturate(1.25) !important;
-    -webkit-backdrop-filter: blur(14px) saturate(1.25) !important;
+    backdrop-filter: blur(5px) saturate(1.08) !important;
+    -webkit-backdrop-filter: blur(5px) saturate(1.08) !important;
+  }
+
+  body[data-theme="liquid"]::before,
+  body[data-theme="liquid-black"]::before,
+  body.has-theme-background::before {
+    filter: blur(1px) saturate(1.02);
+    transform: translateZ(0) scale(1.005);
+    will-change: auto;
+  }
+
+  body[data-theme="liquid"] .box::before,
+  body[data-theme="liquid"] .people::before,
+  body[data-theme="liquid"] .profile-row::before,
+  body[data-theme="liquid"] .admin-panel::before,
+  body[data-theme="liquid"] .chat-panel::before,
+  body[data-theme="liquid"] .gif-panel::before,
+  body[data-theme="liquid"] .kick-card::before,
+  body[data-theme="liquid"] .volume-menu::before,
+  body[data-theme="liquid"] .reaction-menu::before,
+  body[data-theme="liquid"] .youtube-panel::before,
+  body[data-theme="liquid"] .tts-panel::before,
+  body[data-theme="liquid-black"] .box::before,
+  body[data-theme="liquid-black"] .people::before,
+  body[data-theme="liquid-black"] .profile-row::before,
+  body[data-theme="liquid-black"] .admin-panel::before,
+  body[data-theme="liquid-black"] .chat-panel::before,
+  body[data-theme="liquid-black"] .gif-panel::before,
+  body[data-theme="liquid-black"] .kick-card::before,
+  body[data-theme="liquid-black"] .volume-menu::before,
+  body[data-theme="liquid-black"] .reaction-menu::before,
+  body[data-theme="liquid-black"] .youtube-panel::before,
+  body[data-theme="liquid-black"] .tts-panel::before {
+    opacity: 0.22;
   }
 
   body.theme-changing-active .person,

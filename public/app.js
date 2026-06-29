@@ -264,6 +264,7 @@ const MOBILE_METER_INTERVAL_MS = 65;
 const DESKTOP_METER_INTERVAL_MS = 38;
 const MOBILE_YOUTUBE_TIMER_MS = 1000;
 const DESKTOP_YOUTUBE_TIMER_MS = 500;
+const MAX_VISIBLE_CHAT_MESSAGES = 120;
 let lastMobileTouchEnd = 0;
 let lastMobileTouchTarget = null;
 let visualViewportFrame = null;
@@ -726,6 +727,7 @@ function applyThemeDom(mode, accent, background = "", callUi = "classic") {
   document.body.dataset.theme = mode;
   document.body.dataset.accent = accent;
   document.body.dataset.callUi = isCallUi(callUi) ? callUi : "classic";
+  document.body.classList.toggle("has-theme-background", Boolean(background));
   document.documentElement.style.setProperty("--theme-bg-image", background ? `url("${background}")` : "none");
   clearThemeBackgroundButton.hidden = !background;
 }
@@ -5002,7 +5004,7 @@ function createReactionPill(icon, count, active) {
 }
 
 function trimChatDisplay() {
-  while (chatLog.children.length > 25) {
+  while (chatLog.children.length > MAX_VISIBLE_CHAT_MESSAGES) {
     const oldest = chatLog.firstElementChild;
     const id = oldest?.dataset.messageId;
     if (id) state.chatIds.delete(id);

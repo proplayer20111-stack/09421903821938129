@@ -84,8 +84,8 @@ const DEVICE_TIMEOUT_MS = 3 * 60 * 1000;
 const KICK_MAX_MS = 3 * 60 * 1000;
 const KICK_VOTE_TTL_MS = 45 * 1000;
 const VOTE_KICK_COOLDOWN_MS = 7 * 60 * 1000;
-const MAX_CHAT_MESSAGES = 25;
-const CHAT_HISTORY_MESSAGES = 15;
+const MAX_CHAT_MESSAGES = 120;
+const CHAT_HISTORY_MESSAGES = 80;
 const MAX_CHAT_BYTES = 512 * 1024;
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 const MAX_CONCURRENT_UPLOADS = 2;
@@ -2713,7 +2713,7 @@ function loadDeviceRules() {
 function loadChatMessages() {
   try {
     const messages = JSON.parse(fs.readFileSync(CHAT_PATH, "utf8"));
-    return Array.isArray(messages) ? messages.slice(-25) : [];
+    return Array.isArray(messages) ? messages.slice(-MAX_CHAT_MESSAGES) : [];
   } catch {
     return [];
   }
