@@ -696,7 +696,7 @@ function isThemeMode(value) {
 }
 
 function isCallUi(value) {
-  return ["classic", "facetime", "discord"].includes(value);
+  return ["classic", "facetime"].includes(value);
 }
 
 function applyTheme(mode, accent, background = "", callUi = "classic", animate = false) {
