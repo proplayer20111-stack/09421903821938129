@@ -234,6 +234,7 @@ body[data-theme="liquid-black"] .kick-card,
 body[data-theme="liquid-black"] .volume-menu,
 body[data-theme="liquid-black"] .youtube-panel,
 body[data-theme="liquid-black"] .tts-panel {
+  position: relative;
   border-color: rgba(255, 255, 255, 0.52);
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.58), rgba(255, 255, 255, 0.22)),
@@ -242,6 +243,63 @@ body[data-theme="liquid-black"] .tts-panel {
     inset 0 1px 0 rgba(255, 255, 255, 0.72),
     inset 0 -1px 0 rgba(255, 255, 255, 0.16),
     var(--shadow);
+}
+
+body[data-theme="liquid"] .box::before,
+body[data-theme="liquid"] .people::before,
+body[data-theme="liquid"] .profile-row::before,
+body[data-theme="liquid"] .admin-panel::before,
+body[data-theme="liquid"] .chat-panel::before,
+body[data-theme="liquid"] .gif-panel::before,
+body[data-theme="liquid"] .kick-card::before,
+body[data-theme="liquid"] .volume-menu::before,
+body[data-theme="liquid"] .youtube-panel::before,
+body[data-theme="liquid"] .tts-panel::before,
+body[data-theme="liquid-black"] .box::before,
+body[data-theme="liquid-black"] .people::before,
+body[data-theme="liquid-black"] .profile-row::before,
+body[data-theme="liquid-black"] .admin-panel::before,
+body[data-theme="liquid-black"] .chat-panel::before,
+body[data-theme="liquid-black"] .gif-panel::before,
+body[data-theme="liquid-black"] .kick-card::before,
+body[data-theme="liquid-black"] .volume-menu::before,
+body[data-theme="liquid-black"] .youtube-panel::before,
+body[data-theme="liquid-black"] .tts-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    linear-gradient(135deg, var(--glass-shine), transparent 38%),
+    radial-gradient(circle at 18% 0%, var(--glass-edge), transparent 32%);
+  opacity: 0.46;
+  mix-blend-mode: screen;
+}
+
+body[data-theme="liquid"] .box > *,
+body[data-theme="liquid"] .people > *,
+body[data-theme="liquid"] .profile-row > *,
+body[data-theme="liquid"] .admin-panel > *,
+body[data-theme="liquid"] .chat-panel > *,
+body[data-theme="liquid"] .gif-panel > *,
+body[data-theme="liquid"] .kick-card > *,
+body[data-theme="liquid"] .volume-menu > *,
+body[data-theme="liquid"] .youtube-panel > *,
+body[data-theme="liquid"] .tts-panel > *,
+body[data-theme="liquid-black"] .box > *,
+body[data-theme="liquid-black"] .people > *,
+body[data-theme="liquid-black"] .profile-row > *,
+body[data-theme="liquid-black"] .admin-panel > *,
+body[data-theme="liquid-black"] .chat-panel > *,
+body[data-theme="liquid-black"] .gif-panel > *,
+body[data-theme="liquid-black"] .kick-card > *,
+body[data-theme="liquid-black"] .volume-menu > *,
+body[data-theme="liquid-black"] .youtube-panel > *,
+body[data-theme="liquid-black"] .tts-panel > * {
+  position: relative;
+  z-index: 1;
 }
 
 body[data-theme="liquid"] .person,
@@ -258,7 +316,10 @@ body[data-theme="liquid-black"] button.plain,
 body[data-theme="liquid-black"] button.small {
   border-color: rgba(255, 255, 255, 0.46);
   background-color: rgba(255, 255, 255, 0.30);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  box-shadow:
+    inset 0 1px 0 var(--glass-edge),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.10),
+    0 10px 22px var(--glass-depth);
 }
 
 body[data-theme="liquid"] button.blue,
@@ -454,8 +515,8 @@ body[data-theme="liquid-black"] button:hover:not(:disabled)::after {
 
 body[data-theme="liquid"] button:active:not(:disabled),
 body[data-theme="liquid-black"] button:active:not(:disabled) {
-  transform: translateY(1px) scale(1.018, 0.982);
-  filter: brightness(1.04);
+  transform: translateY(1px) scale(1.012, 0.992);
+  filter: brightness(1.025);
 }
 
 body[data-theme="liquid"] .person:hover,
@@ -494,13 +555,14 @@ body[data-theme="liquid-black"] .liquid-held {
   filter: brightness(1.018);
   touch-action: none;
   transition:
-    transform 240ms cubic-bezier(0.16, 0.84, 0.2, 1),
+    transform 180ms cubic-bezier(0.16, 0.84, 0.2, 1),
     filter 120ms ease,
     box-shadow 140ms ease,
     background 160ms ease !important;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.28),
-    0 10px 22px rgba(15, 23, 42, 0.12) !important;
+    inset 0 -1px 0 rgba(255, 255, 255, 0.10),
+    0 12px 26px var(--glass-depth) !important;
 }
 
 body[data-theme="liquid"] .liquid-release,
@@ -1169,6 +1231,9 @@ body[data-theme="liquid"] {
   --shadow: 0 28px 80px rgba(15, 23, 42, 0.22);
   --shadow-soft: 0 16px 40px rgba(15, 23, 42, 0.16);
   --blur: blur(32px) saturate(1.85) contrast(1.04);
+  --glass-edge: rgba(255, 255, 255, 0.78);
+  --glass-shine: rgba(255, 255, 255, 0.34);
+  --glass-depth: rgba(15, 23, 42, 0.12);
 }
 
 body[data-theme="liquid-black"] {
@@ -1186,6 +1251,9 @@ body[data-theme="liquid-black"] {
   --shadow: 0 32px 90px rgba(0, 0, 0, 0.46);
   --shadow-soft: 0 16px 42px rgba(0, 0, 0, 0.34);
   --blur: blur(32px) saturate(1.65) contrast(1.08);
+  --glass-edge: rgba(255, 255, 255, 0.22);
+  --glass-shine: rgba(255, 255, 255, 0.11);
+  --glass-depth: rgba(0, 0, 0, 0.34);
 }
 
 .youtube-player-lock[hidden] {

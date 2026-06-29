@@ -686,9 +686,14 @@ function startLiquidPointerStretch(event) {
     y: 0,
     scaleX: 1,
     scaleY: 1,
+    nextX: 0,
+    nextY: 0,
+    nextScaleX: 1,
+    nextScaleY: 1,
+    frame: null,
     scrollX: window.scrollX,
     scrollY: window.scrollY,
-    holdTimer: setTimeout(() => activateLiquidPointerStretch(event.pointerId), 70)
+    holdTimer: setTimeout(() => activateLiquidPointerStretch(event.pointerId), 115)
   };
 }
 
@@ -714,8 +719,9 @@ function updateLiquidPointerStretch(event) {
   if (!active || active.pointerId !== event.pointerId || active.element.isConnected === false) return;
   const rawDx = event.clientX - active.startX;
   const rawDy = event.clientY - active.startY;
-  const chatScrollIntent = active.element.closest(".chat-log") && Math.abs(rawDy) > 12 && Math.abs(rawDy) > Math.abs(rawDx) * 1.4;
-  if (!active.active && chatScrollIntent) {
+  const movedDistance = Math.hypot(rawDx, rawDy);
+  const scrollIntent = Math.abs(rawDy) > 12 && Math.abs(rawDy) > Math.abs(rawDx) * 1.35;
+  if (!active.active && (movedDistance > 9 || scrollIntent)) {
     active.moved = true;
     clearTimeout(active.holdTimer);
     return;
@@ -728,20 +734,34 @@ function updateLiquidPointerStretch(event) {
   const dy = Math.max(-maxY, Math.min(maxY, rawDy * 0.16));
   const stretchX = 1 + Math.min(0.045, Math.abs(dx) / Math.max(150, active.width * 3.6));
   const stretchY = 1 + Math.min(0.038, Math.abs(dy) / Math.max(150, active.height * 4.4));
-  active.x += (dx - active.x) * 0.14;
-  active.y += (dy - active.y) * 0.14;
-  active.scaleX += (stretchX - active.scaleX) * 0.14;
-  active.scaleY += ((Math.max(0.968, 1 / stretchY)) - active.scaleY) * 0.14;
-  active.element.style.setProperty("--liquid-x", `${active.x.toFixed(2)}px`);
-  active.element.style.setProperty("--liquid-y", `${active.y.toFixed(2)}px`);
-  active.element.style.setProperty("--liquid-scale-x", active.scaleX.toFixed(4));
-  active.element.style.setProperty("--liquid-scale-y", active.scaleY.toFixed(4));
+  active.nextX = dx;
+  active.nextY = dy;
+  active.nextScaleX = stretchX;
+  active.nextScaleY = Math.max(0.968, 1 / stretchY);
+  scheduleLiquidPointerFrame(active);
+}
+
+function scheduleLiquidPointerFrame(active) {
+  if (active.frame) return;
+  active.frame = requestAnimationFrame(() => {
+    active.frame = null;
+    if (state.liquidPointer !== active || !active.active || !active.element.isConnected) return;
+    active.x += (active.nextX - active.x) * 0.18;
+    active.y += (active.nextY - active.y) * 0.18;
+    active.scaleX += (active.nextScaleX - active.scaleX) * 0.18;
+    active.scaleY += (active.nextScaleY - active.scaleY) * 0.18;
+    active.element.style.setProperty("--liquid-x", `${active.x.toFixed(2)}px`);
+    active.element.style.setProperty("--liquid-y", `${active.y.toFixed(2)}px`);
+    active.element.style.setProperty("--liquid-scale-x", active.scaleX.toFixed(4));
+    active.element.style.setProperty("--liquid-scale-y", active.scaleY.toFixed(4));
+  });
 }
 
 function finishLiquidPointerStretch(event) {
   const active = state.liquidPointer;
   if (!active || active.pointerId !== event.pointerId) return;
   clearTimeout(active.holdTimer);
+  if (active.frame) cancelAnimationFrame(active.frame);
   if (active.active) event.preventDefault();
   state.liquidPointer = null;
   const element = active.element;
