@@ -75,9 +75,11 @@ const ttsForm = $("#ttsForm");
 const ttsInput = $("#ttsInput");
 const ttsButton = $("#ttsButton");
 const chatLog = $("#chatLog");
+const chatJumpButton = $("#chatJumpButton");
 const chatPanel = document.querySelector(".chat-panel");
 const chatForm = $("#chatForm");
 const chatInput = $("#chatInput");
+const chatCount = $("#chatCount");
 const chatSendButton = chatForm.querySelector('button[type="submit"]');
 const mediaButton = $("#mediaButton");
 const mediaFile = $("#mediaFile");
@@ -199,6 +201,7 @@ const state = {
   longPressOrigin: null,
   mediaUploading: false,
   chatEnabled: true,
+  chatUnread: 0,
   gifLoading: false,
   giphyApiKey: null,
   gifQuery: "reaction",
@@ -343,6 +346,9 @@ securityList.addEventListener("click", (event) => {
   if (button) updateSecurityIp(button.dataset.ip, button.dataset.securityAction);
 });
 chatForm.addEventListener("submit", sendChat);
+chatInput.addEventListener("input", updateChatComposer);
+chatLog.addEventListener("scroll", handleChatScroll);
+chatJumpButton.addEventListener("click", jumpToNewestChat);
 ttsForm.addEventListener("submit", submitTextToSpeech);
 mediaButton.addEventListener("click", () => mediaFile.click());
 mediaFile.addEventListener("change", uploadChatMedia);
@@ -1121,6 +1127,8 @@ function logout() {
   updateOnlineCounter();
   updatePopups();
   state.chatIds.clear();
+  state.chatUnread = 0;
+  updateChatJumpButton();
   chatLog.textContent = "";
   authName.value = "";
   authPassword.value = "";
@@ -1297,6 +1305,8 @@ async function clearAllChatMessages() {
     }
     chatLog.textContent = "";
     state.chatIds.clear();
+    state.chatUnread = 0;
+    updateChatJumpButton();
     updateAdminChatCount(0);
     setAdminChatStatus("all messages deleted");
   } catch (error) {
@@ -1316,7 +1326,12 @@ function applyChatState(enabled) {
   gifButton.disabled = !state.chatEnabled;
   chatPanel.classList.toggle("chat-disabled", !state.chatEnabled);
   if (!state.chatEnabled) gifPanel.hidden = true;
+  if (!state.chatEnabled) {
+    state.chatUnread = 0;
+    updateChatJumpButton();
+  }
   chatInput.placeholder = state.chatEnabled ? "message or link" : "chat disabled by admin";
+  updateChatComposer();
 }
 
 function updateAdminChatCount(count) {
@@ -1790,7 +1805,11 @@ async function handleSignal(message) {
   if (message.type === "chat-history") {
     chatLog.textContent = "";
     state.chatIds.clear();
+    state.chatUnread = 0;
     for (const chat of message.messages || []) addChatBubble(chat);
+    state.chatUnread = 0;
+    updateChatJumpButton();
+    scrollChatToBottom();
     updateAdminChatCount(message.messages?.length || 0);
     return;
   }
@@ -1803,6 +1822,8 @@ async function handleSignal(message) {
   if (message.type === "chat-cleared") {
     chatLog.textContent = "";
     state.chatIds.clear();
+    state.chatUnread = 0;
+    updateChatJumpButton();
     updateAdminChatCount(0);
     return;
   }
@@ -4337,6 +4358,16 @@ async function sendChat(event) {
 
   send({ type: "chat", text });
   chatInput.value = "";
+  updateChatComposer();
+}
+
+function updateChatComposer() {
+  const length = chatInput.value.length;
+  const max = Number(chatInput.maxLength) || 500;
+  chatSendButton.disabled = !state.chatEnabled || !chatInput.value.trim();
+  chatCount.hidden = !state.chatEnabled || length < Math.floor(max * 0.8);
+  chatCount.textContent = `${length}/${max}`;
+  chatCount.classList.toggle("near-limit", length >= Math.floor(max * 0.94));
 }
 
 async function submitTextToSpeech(event) {
@@ -4751,12 +4782,17 @@ function addChatBubble(message) {
   chatLog.append(row);
   trimChatDisplay();
   if (followBottom) {
+    state.chatUnread = 0;
+    updateChatJumpButton();
     scrollChatToBottom();
     const media = row.querySelector(".chat-media");
     if (media) {
       const eventName = media.tagName === "VIDEO" ? "loadedmetadata" : "load";
       media.addEventListener(eventName, scrollChatToBottom, { once: true });
     }
+  } else {
+    state.chatUnread = Math.min(99, state.chatUnread + 1);
+    updateChatJumpButton();
   }
 }
 
@@ -4774,8 +4810,26 @@ function isChatNearBottom() {
   return chatLog.scrollHeight - chatLog.scrollTop - chatLog.clientHeight < 120;
 }
 
-function scrollChatToBottom() {
-  chatLog.scrollTop = chatLog.scrollHeight;
+function scrollChatToBottom(smooth = false) {
+  chatLog.scrollTo({ top: chatLog.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+}
+
+function handleChatScroll() {
+  if (!isChatNearBottom() || !state.chatUnread) return;
+  state.chatUnread = 0;
+  updateChatJumpButton();
+}
+
+function jumpToNewestChat() {
+  state.chatUnread = 0;
+  updateChatJumpButton();
+  scrollChatToBottom(true);
+}
+
+function updateChatJumpButton() {
+  const count = Number(state.chatUnread) || 0;
+  chatJumpButton.hidden = !state.chatEnabled || count <= 0;
+  chatJumpButton.textContent = count > 1 ? `${count} new messages` : "new message";
 }
 
 function appendChatMedia(parent, message) {

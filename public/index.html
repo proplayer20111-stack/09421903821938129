@@ -210,7 +210,10 @@
 
           <aside class="chat-panel">
             <h2>Chat</h2>
-            <div class="chat-log" id="chatLog"></div>
+            <div class="chat-wrap">
+              <div class="chat-log" id="chatLog"></div>
+              <button class="small chat-jump" id="chatJumpButton" type="button" hidden>new messages</button>
+            </div>
             <div class="gif-panel" id="gifPanel" hidden>
               <div class="gif-search-row">
                 <input id="gifSearch" maxlength="40" placeholder="search gifs">
@@ -224,6 +227,7 @@
               <button class="small icon-button" id="gifButton" type="button" title="gifs">gif</button>
               <input id="mediaFile" type="file" accept="image/*,video/*" hidden>
               <input id="chatInput" maxlength="500" placeholder="message or link">
+              <span class="chat-count" id="chatCount" hidden>0/500</span>
               <button class="blue" type="submit">send</button>
             </form>
           </aside>
