@@ -217,11 +217,10 @@ body[data-theme="liquid"]::before,
 body[data-theme="liquid-black"]::before {
   inset: -10vmax;
   opacity: 1;
-  filter: blur(6px) saturate(1.12);
-  transform: translateZ(0) scale(1.02);
+  filter: blur(3px) saturate(1.06);
+  transform: translateZ(0) scale(1.01);
   background-attachment: fixed, fixed, fixed, fixed, fixed;
   background-size: cover, 80vmax 80vmax, 78vmax 78vmax, 88vmax 88vmax, cover;
-  will-change: transform;
 }
 
 body.has-theme-background::before {
@@ -1047,8 +1046,8 @@ body[data-call-ui="facetime"] .people::after {
     0 12px 28px rgba(0, 0, 0, 0.28);
   font-size: 16px;
   font-weight: 800;
-  backdrop-filter: blur(18px) saturate(1.2);
-  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  backdrop-filter: blur(8px) saturate(1.08);
+  -webkit-backdrop-filter: blur(8px) saturate(1.08);
 }
 
 body[data-call-ui="facetime"] .person {
@@ -1068,6 +1067,21 @@ body[data-call-ui="facetime"] .person {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.06),
     0 18px 42px rgba(0, 0, 0, 0.22);
+}
+
+@media (min-width: 760px) {
+  body[data-call-ui="facetime"] .people {
+    grid-template-columns: repeat(auto-fit, minmax(170px, 220px));
+    justify-content: center;
+    align-content: start;
+  }
+
+  body[data-call-ui="facetime"] .person {
+    width: min(100%, 220px);
+    min-height: 0;
+    aspect-ratio: 1 / 0.9;
+    justify-self: center;
+  }
 }
 
 body[data-call-ui="facetime"] .person:hover {
@@ -1271,8 +1285,8 @@ body[data-call-ui="facetime"][data-theme="liquid"] .person {
   background:
     radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.38), transparent 32%),
     linear-gradient(145deg, rgba(255, 255, 255, 0.42), rgba(96, 165, 250, 0.18));
-  backdrop-filter: blur(24px) saturate(1.45);
-  -webkit-backdrop-filter: blur(24px) saturate(1.45);
+  backdrop-filter: blur(10px) saturate(1.16);
+  -webkit-backdrop-filter: blur(10px) saturate(1.16);
 }
 
 body[data-call-ui="facetime"][data-theme="liquid"] .person .name {
@@ -2720,21 +2734,21 @@ body[data-theme="liquid-black"] {
   body[data-theme="liquid-black"] .volume-menu,
   body[data-theme="liquid-black"] .youtube-panel,
   body[data-theme="liquid-black"] .tts-panel {
-    backdrop-filter: blur(7px) saturate(1.12) !important;
-    -webkit-backdrop-filter: blur(7px) saturate(1.12) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
   }
 
   body[data-theme="liquid"] .bubble,
   body[data-theme="liquid-black"] .bubble {
-    backdrop-filter: blur(5px) saturate(1.08) !important;
-    -webkit-backdrop-filter: blur(5px) saturate(1.08) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
   }
 
   body[data-theme="liquid"]::before,
   body[data-theme="liquid-black"]::before,
   body.has-theme-background::before {
-    filter: blur(1px) saturate(1.02);
-    transform: translateZ(0) scale(1.005);
+    filter: none;
+    transform: none;
     will-change: auto;
   }
 
@@ -2768,7 +2782,7 @@ body[data-theme="liquid-black"] {
   body.theme-changing-active button,
   body.theme-changing-active input,
   body.theme-changing-active select {
-    animation-duration: 300ms;
+    animation: none;
   }
 
   html,
@@ -3028,12 +3042,7 @@ body[data-theme="liquid-black"] {
   body[data-theme="liquid-black"] .person,
   body[data-theme="liquid"] .bubble,
   body[data-theme="liquid-black"] .bubble {
-    transition:
-      transform 220ms cubic-bezier(0.18, 0.9, 0.2, 1.25),
-      box-shadow 180ms ease,
-      border-color 160ms ease,
-      background 180ms ease,
-      filter 180ms ease;
+    transition: background 140ms ease, border-color 140ms ease;
   }
 
   body[data-theme="liquid"] .person.speaking,

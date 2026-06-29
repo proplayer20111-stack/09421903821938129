@@ -260,11 +260,11 @@ const SCREEN_RELAY_MAX_BUFFERED_BYTES = 512 * 1024;
 const SCREEN_SHARING_ENABLED = false;
 const MOBILE_CALL_HEALTH_INTERVAL_MS = 12000;
 const DESKTOP_CALL_HEALTH_INTERVAL_MS = 6000;
-const MOBILE_METER_INTERVAL_MS = 65;
-const DESKTOP_METER_INTERVAL_MS = 38;
+const MOBILE_METER_INTERVAL_MS = 120;
+const DESKTOP_METER_INTERVAL_MS = 55;
 const MOBILE_YOUTUBE_TIMER_MS = 1000;
 const DESKTOP_YOUTUBE_TIMER_MS = 500;
-const MAX_VISIBLE_CHAT_MESSAGES = 120;
+const MAX_VISIBLE_CHAT_MESSAGES = 25;
 let lastMobileTouchEnd = 0;
 let lastMobileTouchTarget = null;
 let visualViewportFrame = null;
@@ -702,7 +702,7 @@ function isCallUi(value) {
 
 function applyTheme(mode, accent, background = "", callUi = "classic", animate = false) {
   const update = () => applyThemeDom(mode, accent, background, callUi);
-  if (!animate || matchMedia("(prefers-reduced-motion: reduce)").matches) {
+  if (!animate || state.deviceType === "mobile" || matchMedia("(prefers-reduced-motion: reduce)").matches) {
     update();
     return;
   }
@@ -738,7 +738,9 @@ function isLiquidThemeActive() {
 
 function liquidInteractiveTarget(target) {
   if (!isLiquidThemeActive()) return null;
+  if (state.deviceType === "mobile") return null;
   if (target?.closest?.(".chat-entry .bubble")) return null;
+  if (document.body.dataset.callUi === "facetime" && target?.closest?.(".person")) return null;
   const element = target?.closest?.("button:not(:disabled), .person, .bubble, .kick-card, .youtube-queue-item");
   if (!element || element.closest(".volume-backdrop[hidden]")) return null;
   return element;
