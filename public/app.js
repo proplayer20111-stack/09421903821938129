@@ -677,7 +677,7 @@ function isLiquidThemeActive() {
 
 function liquidInteractiveTarget(target) {
   if (!isLiquidThemeActive()) return null;
-  const element = target?.closest?.(".person, .bubble, .kick-card, .youtube-queue-item");
+  const element = target?.closest?.("button:not(:disabled), .person, .bubble, .kick-card, .youtube-queue-item");
   if (!element || element.closest(".volume-backdrop[hidden]")) return null;
   return element;
 }
@@ -707,7 +707,7 @@ function startLiquidPointerStretch(event) {
     frame: null,
     scrollX: window.scrollX,
     scrollY: window.scrollY,
-    holdTimer: setTimeout(() => activateLiquidPointerStretch(event.pointerId), 115)
+    holdTimer: setTimeout(() => activateLiquidPointerStretch(event.pointerId), 280)
   };
 }
 
