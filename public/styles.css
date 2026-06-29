@@ -1267,13 +1267,14 @@ body[data-call-ui="discord"] .people {
   grid-template-columns: repeat(2, minmax(0, 220px));
   justify-content: center;
   align-content: start;
-  gap: 10px;
-  min-height: clamp(230px, 36vh, 390px);
-  padding: 42px 14px 68px;
+  gap: 8px;
+  min-height: clamp(235px, 38vh, 410px);
+  padding: 46px 14px 74px;
   overflow-y: auto;
   border-color: rgba(255, 255, 255, 0.07);
   border-radius: 0 0 var(--radius-md) var(--radius-md);
-  background: #111214;
+  background:
+    linear-gradient(180deg, #111214 0 63%, #313338 63% 100%);
   box-shadow:
     inset 0 -1px 0 rgba(255, 255, 255, 0.04),
     var(--shadow-soft);
@@ -1292,33 +1293,41 @@ body[data-call-ui="discord"] .people::before {
 }
 
 body[data-call-ui="discord"] .people::after {
-  content: "";
+  content: "◼  ▣  ●  ✕";
   position: absolute;
   left: 50%;
   bottom: 14px;
-  width: min(248px, calc(100% - 32px));
-  height: 48px;
+  width: min(250px, calc(100% - 32px));
+  height: 52px;
   transform: translateX(-50%);
   border-radius: 999px;
+  color: #f2f3f5;
   background:
-    radial-gradient(circle at 22px 50%, #2b2d31 0 23px, transparent 24px),
-    radial-gradient(circle at 78px 50%, #2b2d31 0 23px, transparent 24px),
-    radial-gradient(circle at 134px 50%, #2b2d31 0 23px, transparent 24px),
-    radial-gradient(circle at 202px 50%, #f23f42 0 25px, transparent 26px);
+    radial-gradient(circle at 24px 50%, #2b2d31 0 24px, transparent 25px),
+    radial-gradient(circle at 82px 50%, #2b2d31 0 24px, transparent 25px),
+    radial-gradient(circle at 140px 50%, #2b2d31 0 24px, transparent 25px),
+    radial-gradient(circle at 218px 50%, #f23f42 0 26px, transparent 27px);
   box-shadow: 0 16px 34px rgba(0, 0, 0, 0.24);
   pointer-events: none;
+  font-size: 19px;
+  font-weight: 900;
+  line-height: 52px;
+  letter-spacing: 27px;
+  text-align: left;
+  text-indent: 14px;
+  white-space: nowrap;
 }
 
 body[data-call-ui="discord"] .person {
   position: relative;
   display: grid;
   place-items: center;
-  min-height: 122px;
+  min-height: 124px;
   margin: 0;
   padding: 16px;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 8px;
+  border-radius: 7px;
   background: #3f8795;
   box-shadow: none;
 }
@@ -1350,27 +1359,7 @@ body[data-call-ui="discord"] .person .avatar {
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.22);
 }
 
-body[data-call-ui="discord"] .person .who {
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  bottom: 8px;
-  min-width: 0;
-}
-
-body[data-call-ui="discord"] .person .name-line {
-  justify-content: center;
-}
-
-body[data-call-ui="discord"] .person .name {
-  max-width: 100%;
-  color: #ffffff;
-  font-size: 13px;
-  font-weight: 800;
-  text-align: center;
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.30);
-}
-
+body[data-call-ui="discord"] .person .who,
 body[data-call-ui="discord"] .person .device-badge,
 body[data-call-ui="discord"] .person .tag {
   display: none;
@@ -1405,7 +1394,8 @@ body[data-call-ui="discord"] .person.remote-muted .peer-mute::before {
 
 body[data-call-ui="discord"][data-theme="white"] .people {
   border-color: rgba(15, 23, 42, 0.08);
-  background: #f2f3f5;
+  background:
+    linear-gradient(180deg, #f2f3f5 0 63%, #e3e5e8 63% 100%);
 }
 
 body[data-call-ui="discord"][data-theme="white"] .people::before {
@@ -1413,11 +1403,12 @@ body[data-call-ui="discord"][data-theme="white"] .people::before {
 }
 
 body[data-call-ui="discord"][data-theme="white"] .people::after {
+  color: #2e3338;
   background:
-    radial-gradient(circle at 22px 50%, #e3e5e8 0 23px, transparent 24px),
-    radial-gradient(circle at 78px 50%, #e3e5e8 0 23px, transparent 24px),
-    radial-gradient(circle at 134px 50%, #e3e5e8 0 23px, transparent 24px),
-    radial-gradient(circle at 202px 50%, #ed4245 0 25px, transparent 26px);
+    radial-gradient(circle at 24px 50%, #ffffff 0 24px, transparent 25px),
+    radial-gradient(circle at 82px 50%, #ffffff 0 24px, transparent 25px),
+    radial-gradient(circle at 140px 50%, #ffffff 0 24px, transparent 25px),
+    radial-gradient(circle at 218px 50%, #ed4245 0 26px, transparent 27px);
 }
 
 body[data-call-ui="discord"][data-theme="white"] .person,
@@ -1425,11 +1416,6 @@ body[data-call-ui="discord"][data-theme="white"] .person:nth-child(2n) {
   border-color: rgba(15, 23, 42, 0.08);
   background: #ffffff;
   box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
-}
-
-body[data-call-ui="discord"][data-theme="white"] .person .name {
-  color: #2e3338;
-  text-shadow: none;
 }
 
 body[data-call-ui="discord"][data-theme="white"] .person.speaking {
@@ -1440,7 +1426,8 @@ body[data-call-ui="discord"][data-theme="white"] .person.speaking {
 }
 
 body[data-call-ui="discord"][data-theme="black"] .people {
-  background: #111214;
+  background:
+    linear-gradient(180deg, #111214 0 63%, #313338 63% 100%);
 }
 
 body[data-call-ui="discord"][data-theme="black"] .person,
@@ -1451,7 +1438,7 @@ body[data-call-ui="discord"][data-theme="black"] .person:nth-child(2n) {
 body[data-call-ui="discord"][data-theme="liquid"] .people {
   background:
     var(--theme-bg-image),
-    linear-gradient(180deg, rgba(248, 250, 252, 0.70), rgba(219, 234, 254, 0.56));
+    linear-gradient(180deg, rgba(248, 250, 252, 0.72) 0 63%, rgba(219, 234, 254, 0.62) 63% 100%);
   background-size: cover, auto;
   background-position: center;
 }
@@ -1464,15 +1451,10 @@ body[data-call-ui="discord"][data-theme="liquid"] .person:nth-child(2n) {
   -webkit-backdrop-filter: blur(22px) saturate(1.35);
 }
 
-body[data-call-ui="discord"][data-theme="liquid"] .person .name {
-  color: #0f172a;
-  text-shadow: 0 1px 10px rgba(255, 255, 255, 0.58);
-}
-
 body[data-call-ui="discord"][data-theme="liquid-black"] .people {
   background:
     var(--theme-bg-image),
-    linear-gradient(180deg, rgba(17, 24, 39, 0.76), rgba(2, 6, 23, 0.82));
+    linear-gradient(180deg, rgba(17, 24, 39, 0.78) 0 63%, rgba(2, 6, 23, 0.86) 63% 100%);
   background-size: cover, auto;
   background-position: center;
 }
@@ -1483,6 +1465,10 @@ body[data-call-ui="discord"][data-theme="liquid-black"] .person:nth-child(2n) {
   background: rgba(30, 41, 59, 0.48);
   backdrop-filter: blur(22px) saturate(1.28);
   -webkit-backdrop-filter: blur(22px) saturate(1.28);
+}
+
+body[data-call-ui="discord"] .people::before {
+  content: "region   US v";
 }
 
 .avatar {
