@@ -47,6 +47,7 @@ const profilePanel = $("#profilePanel");
 const themePanel = $("#themePanel");
 const themeMode = $("#themeMode");
 const themeAccent = $("#themeAccent");
+const themeCallUi = $("#themeCallUi");
 const themeBackgroundFile = $("#themeBackgroundFile");
 const clearThemeBackgroundButton = $("#clearThemeBackgroundButton");
 const adminPanel = $("#adminPanel");
@@ -308,6 +309,7 @@ directMediaPlayer.addEventListener("ended", handleDirectMediaEnded);
 directMediaPlayer.addEventListener("error", () => showToast("this media link could not be played"));
 themeMode.addEventListener("change", saveTheme);
 themeAccent.addEventListener("change", saveTheme);
+themeCallUi.addEventListener("change", saveTheme);
 themeBackgroundFile.addEventListener("change", saveThemeBackground);
 clearThemeBackgroundButton.addEventListener("click", clearThemeBackground);
 adminButton.addEventListener("click", async () => {
@@ -586,10 +588,12 @@ function loadTheme() {
   const background = isThemeBackgroundUrl(saved?.background)
     ? saved.background
     : "";
+  const callUi = isCallUi(saved?.callUi) ? saved.callUi : "classic";
 
   themeMode.value = mode;
   themeAccent.value = accent;
-  applyTheme(mode, accent, background);
+  themeCallUi.value = callUi;
+  applyTheme(mode, accent, background, callUi);
 }
 
 function saveTheme() {
@@ -597,10 +601,11 @@ function saveTheme() {
   const accent = ["blue", "purple", "green", "red", "pink", "orange"].includes(themeAccent.value)
     ? themeAccent.value
     : "blue";
+  const callUi = isCallUi(themeCallUi.value) ? themeCallUi.value : "classic";
   const previous = readSavedTheme();
   const background = typeof previous.background === "string" ? previous.background : "";
-  localStorage.setItem(THEME_KEY, JSON.stringify({ mode, accent, background }));
-  applyTheme(mode, accent, background);
+  localStorage.setItem(THEME_KEY, JSON.stringify({ mode, accent, background, callUi }));
+  applyTheme(mode, accent, background, callUi);
 }
 
 function readSavedTheme() {
@@ -635,10 +640,12 @@ async function saveThemeBackground() {
     const previous = readSavedTheme();
     const mode = isThemeMode(previous.mode) ? previous.mode : "liquid";
     const accent = ["blue", "purple", "green", "red", "pink", "orange"].includes(previous.accent) ? previous.accent : "blue";
-    localStorage.setItem(THEME_KEY, JSON.stringify({ mode, accent, background }));
+    const callUi = isCallUi(previous.callUi) ? previous.callUi : themeCallUi.value;
+    localStorage.setItem(THEME_KEY, JSON.stringify({ mode, accent, background, callUi }));
     themeMode.value = mode;
     themeAccent.value = accent;
-    applyTheme(mode, accent, background);
+    themeCallUi.value = callUi;
+    applyTheme(mode, accent, background, callUi);
     showToast("background saved");
   } catch (error) {
     showToast(error.message || "background upload failed");
@@ -651,8 +658,9 @@ function clearThemeBackground() {
   const previous = readSavedTheme();
   const mode = isThemeMode(previous.mode) ? previous.mode : themeMode.value;
   const accent = ["blue", "purple", "green", "red", "pink", "orange"].includes(previous.accent) ? previous.accent : themeAccent.value;
-  localStorage.setItem(THEME_KEY, JSON.stringify({ mode, accent, background: "" }));
-  applyTheme(mode, accent, "");
+  const callUi = isCallUi(previous.callUi) ? previous.callUi : themeCallUi.value;
+  localStorage.setItem(THEME_KEY, JSON.stringify({ mode, accent, background: "", callUi }));
+  applyTheme(mode, accent, "", callUi);
   showToast("background cleared");
 }
 
@@ -665,9 +673,14 @@ function isThemeMode(value) {
   return ["white", "black", "liquid", "liquid-black"].includes(value);
 }
 
-function applyTheme(mode, accent, background = "") {
+function isCallUi(value) {
+  return ["classic", "facetime"].includes(value);
+}
+
+function applyTheme(mode, accent, background = "", callUi = "classic") {
   document.body.dataset.theme = mode;
   document.body.dataset.accent = accent;
+  document.body.dataset.callUi = isCallUi(callUi) ? callUi : "classic";
   document.documentElement.style.setProperty("--theme-bg-image", background ? `url("${background}")` : "none");
   clearThemeBackgroundButton.hidden = !background;
 }
@@ -2480,6 +2493,7 @@ function renderDeviceBadge(target, deviceType) {
 function updatePopups() {
   participants.hidden = !participants.children.length;
   participants.classList.toggle("has-screen-share", Boolean(participants.querySelector(".person.screen-sharing")));
+  participants.dataset.count = `${participants.children.length} ${participants.children.length === 1 ? "Person" : "People"} ›`;
   kickVotes.hidden = !kickVotes.children.length;
 }
 
