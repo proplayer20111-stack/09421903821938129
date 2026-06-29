@@ -243,6 +243,7 @@ const state = {
   originalTitle: document.title,
   titleTimer: null,
   liquidPointer: null,
+  themeTransitionTimer: null,
   speakingEnergy: 0,
   lastVoiceAt: 0,
   voiceStartAt: 0
@@ -626,7 +627,7 @@ function saveTheme() {
   const previous = readSavedTheme();
   const background = typeof previous.background === "string" ? previous.background : "";
   localStorage.setItem(THEME_KEY, JSON.stringify({ mode, accent, background, callUi }));
-  applyTheme(mode, accent, background, callUi);
+  applyTheme(mode, accent, background, callUi, true);
 }
 
 function readSavedTheme() {
@@ -666,7 +667,7 @@ async function saveThemeBackground() {
     themeMode.value = mode;
     themeAccent.value = accent;
     themeCallUi.value = callUi;
-    applyTheme(mode, accent, background, callUi);
+    applyTheme(mode, accent, background, callUi, true);
     showToast("background saved");
   } catch (error) {
     showToast(error.message || "background upload failed");
@@ -681,7 +682,7 @@ function clearThemeBackground() {
   const accent = ["blue", "purple", "green", "red", "pink", "orange"].includes(previous.accent) ? previous.accent : themeAccent.value;
   const callUi = isCallUi(previous.callUi) ? previous.callUi : themeCallUi.value;
   localStorage.setItem(THEME_KEY, JSON.stringify({ mode, accent, background: "", callUi }));
-  applyTheme(mode, accent, "", callUi);
+  applyTheme(mode, accent, "", callUi, true);
   showToast("background cleared");
 }
 
@@ -698,7 +699,30 @@ function isCallUi(value) {
   return ["classic", "facetime"].includes(value);
 }
 
-function applyTheme(mode, accent, background = "", callUi = "classic") {
+function applyTheme(mode, accent, background = "", callUi = "classic", animate = false) {
+  const update = () => applyThemeDom(mode, accent, background, callUi);
+  if (!animate || matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    update();
+    return;
+  }
+
+  if (document.startViewTransition) {
+    document.documentElement.classList.add("theme-transitioning");
+    const transition = document.startViewTransition(update);
+    transition.finished.finally(() => document.documentElement.classList.remove("theme-transitioning"));
+    return;
+  }
+
+  document.body.classList.add("theme-changing");
+  requestAnimationFrame(() => document.body.classList.add("theme-changing-active"));
+  update();
+  clearTimeout(state.themeTransitionTimer);
+  state.themeTransitionTimer = setTimeout(() => {
+    document.body.classList.remove("theme-changing", "theme-changing-active");
+  }, 620);
+}
+
+function applyThemeDom(mode, accent, background = "", callUi = "classic") {
   document.body.dataset.theme = mode;
   document.body.dataset.accent = accent;
   document.body.dataset.callUi = isCallUi(callUi) ? callUi : "classic";
