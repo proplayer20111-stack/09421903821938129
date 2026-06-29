@@ -359,6 +359,7 @@ chatLog.addEventListener("pointerdown", startChatReactionHold);
 chatLog.addEventListener("pointermove", moveChatReactionHold);
 chatLog.addEventListener("pointerup", cancelChatReactionHold);
 chatLog.addEventListener("pointercancel", cancelChatReactionHold);
+chatLog.addEventListener("contextmenu", openChatReactionContextMenu);
 chatJumpButton.addEventListener("click", jumpToNewestChat);
 reactionMenu.addEventListener("click", handleReactionMenuClick);
 ttsForm.addEventListener("submit", submitTextToSpeech);
@@ -677,6 +678,7 @@ function isLiquidThemeActive() {
 
 function liquidInteractiveTarget(target) {
   if (!isLiquidThemeActive()) return null;
+  if (target?.closest?.(".chat-entry .bubble")) return null;
   const element = target?.closest?.("button:not(:disabled), .person, .bubble, .kick-card, .youtube-queue-item");
   if (!element || element.closest(".volume-backdrop[hidden]")) return null;
   return element;
@@ -4848,6 +4850,7 @@ function startChatReactionHold(event) {
   const row = event.target.closest(".chat-entry");
   if (!row || row.dataset.kind !== "text" || !row.dataset.messageId) return;
   closeReactionMenu();
+  event.preventDefault();
   state.chatHoldPointerId = event.pointerId;
   state.chatHoldOrigin = { x: event.clientX, y: event.clientY };
   state.chatHoldTimer = setTimeout(() => {
@@ -4855,6 +4858,14 @@ function startChatReactionHold(event) {
     navigator.vibrate?.(12);
     openReactionMenu(row.dataset.messageId, event.clientX, event.clientY);
   }, 480);
+}
+
+function openChatReactionContextMenu(event) {
+  const row = event.target.closest(".chat-entry");
+  if (!row || row.dataset.kind !== "text" || !row.dataset.messageId || event.target.closest("a, button, input, select, video")) return;
+  event.preventDefault();
+  cancelChatReactionHold();
+  openReactionMenu(row.dataset.messageId, event.clientX, event.clientY);
 }
 
 function moveChatReactionHold(event) {
