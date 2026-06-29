@@ -756,6 +756,11 @@ function handleMessage(client, message) {
     return;
   }
 
+  if (message.type === "chat-reaction") {
+    handleChatReaction(client, message);
+    return;
+  }
+
   if (["speaking", "mute"].includes(message.type)) {
     broadcast(client.room, {
       ...message,
@@ -1655,6 +1660,11 @@ function sanitizeChat(text) {
   return String(text || "").trim().slice(0, 500);
 }
 
+function sanitizeChatReaction(value) {
+  const reaction = String(value || "").trim().toLowerCase();
+  return reaction === "up" || reaction === "down" ? reaction : "";
+}
+
 function getVapidKeys() {
   if (!webPush) return { publicKey: "", privateKey: "" };
   if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
@@ -1814,6 +1824,44 @@ async function handleGifSend(req, res, url) {
   } catch (error) {
     sendJson(res, 400, { error: error.message || "could not send GIF" });
   }
+}
+
+function handleChatReaction(client, message) {
+  if (!client.account || !chatEnabled) return;
+  const messageId = String(message.messageId || "").trim();
+  const reaction = sanitizeChatReaction(message.reaction);
+  if (!messageId || !reaction) return;
+  const chat = chatMessages.find((item) => item.id === messageId);
+  if (!chat || chat.kind === "media" || chat.kind === "gif") return;
+
+  chat.reactions = normalizeChatReactions(chat.reactions);
+  const opposite = reaction === "up" ? "down" : "up";
+  chat.reactions[opposite] = chat.reactions[opposite].filter((username) => username !== client.account);
+  if (chat.reactions[reaction].includes(client.account)) {
+    chat.reactions[reaction] = chat.reactions[reaction].filter((username) => username !== client.account);
+  } else {
+    chat.reactions[reaction].push(client.account);
+  }
+  chat.reactions.up = chat.reactions.up.slice(-40);
+  chat.reactions.down = chat.reactions.down.slice(-40);
+  saveChatMessages();
+  broadcastPresence({
+    type: "chat-reaction",
+    messageId,
+    reactions: chat.reactions
+  });
+}
+
+function normalizeChatReactions(reactions) {
+  return {
+    up: uniqueReactionUsers(reactions?.up),
+    down: uniqueReactionUsers(reactions?.down)
+  };
+}
+
+function uniqueReactionUsers(users) {
+  if (!Array.isArray(users)) return [];
+  return [...new Set(users.map((user) => String(user || "").trim()).filter(Boolean))].slice(-40);
 }
 
 async function handlePushSubscribe(req, res) {

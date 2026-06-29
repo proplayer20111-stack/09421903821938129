@@ -102,6 +102,7 @@ const volumeReset = $("#volumeReset");
 const volumeMute = $("#volumeMute");
 const volumeClose = $("#volumeClose");
 const voteKickButton = $("#voteKickButton");
+const reactionMenu = $("#reactionMenu");
 const kickStartPanel = $("#kickStartPanel");
 const kickTargetTitle = $("#kickTargetTitle");
 const kickDuration = $("#kickDuration");
@@ -199,6 +200,12 @@ const state = {
   activeKickTargetId: "",
   longPressTimer: null,
   longPressOrigin: null,
+  longPressPointerId: null,
+  chatHoldTimer: null,
+  chatHoldOrigin: null,
+  chatHoldPointerId: null,
+  activeReactionMessageId: "",
+  ignoreDocumentClickUntil: 0,
   mediaUploading: false,
   chatEnabled: true,
   chatUnread: 0,
@@ -337,10 +344,10 @@ participants.addEventListener("contextmenu", (event) => {
   event.preventDefault();
   openVolumeMenu(card.dataset.id, event.clientX, event.clientY);
 });
-participants.addEventListener("touchstart", startParticipantHold, { passive: true });
-participants.addEventListener("touchend", cancelParticipantHold);
-participants.addEventListener("touchmove", cancelParticipantHold);
-participants.addEventListener("touchcancel", cancelParticipantHold);
+participants.addEventListener("pointerdown", startParticipantHold);
+participants.addEventListener("pointermove", moveParticipantHold);
+participants.addEventListener("pointerup", cancelParticipantHold);
+participants.addEventListener("pointercancel", cancelParticipantHold);
 securityList.addEventListener("click", (event) => {
   const button = event.target.closest("[data-security-action]");
   if (button) updateSecurityIp(button.dataset.ip, button.dataset.securityAction);
@@ -348,7 +355,12 @@ securityList.addEventListener("click", (event) => {
 chatForm.addEventListener("submit", sendChat);
 chatInput.addEventListener("input", updateChatComposer);
 chatLog.addEventListener("scroll", handleChatScroll);
+chatLog.addEventListener("pointerdown", startChatReactionHold);
+chatLog.addEventListener("pointermove", moveChatReactionHold);
+chatLog.addEventListener("pointerup", cancelChatReactionHold);
+chatLog.addEventListener("pointercancel", cancelChatReactionHold);
 chatJumpButton.addEventListener("click", jumpToNewestChat);
+reactionMenu.addEventListener("click", handleReactionMenuClick);
 ttsForm.addEventListener("submit", submitTextToSpeech);
 mediaButton.addEventListener("click", () => mediaFile.click());
 mediaFile.addEventListener("change", uploadChatMedia);
@@ -385,7 +397,9 @@ kickVotes.addEventListener("click", (event) => {
   if (button) castKickVote(button.dataset.kickVoteId);
 });
 document.addEventListener("click", (event) => {
+  if (Date.now() < state.ignoreDocumentClickUntil) return;
   if (!volumeBackdrop.hidden && !volumeMenu.contains(event.target) && event.target !== volumeBackdrop) closeVolumeMenu();
+  if (!reactionMenu.hidden && !reactionMenu.contains(event.target)) closeReactionMenu();
 });
 document.addEventListener("pointerdown", startLiquidPointerStretch, { passive: false });
 document.addEventListener("pointermove", updateLiquidPointerStretch, { passive: false });
@@ -663,7 +677,7 @@ function isLiquidThemeActive() {
 
 function liquidInteractiveTarget(target) {
   if (!isLiquidThemeActive()) return null;
-  const element = target?.closest?.("button:not(:disabled), .person, .bubble, .kick-card, .youtube-queue-item");
+  const element = target?.closest?.(".person, .bubble, .kick-card, .youtube-queue-item");
   if (!element || element.closest(".volume-backdrop[hidden]")) return null;
   return element;
 }
@@ -719,9 +733,8 @@ function updateLiquidPointerStretch(event) {
   if (!active || active.pointerId !== event.pointerId || active.element.isConnected === false) return;
   const rawDx = event.clientX - active.startX;
   const rawDy = event.clientY - active.startY;
-  const movedDistance = Math.hypot(rawDx, rawDy);
   const scrollIntent = Math.abs(rawDy) > 12 && Math.abs(rawDy) > Math.abs(rawDx) * 1.35;
-  if (!active.active && (movedDistance > 9 || scrollIntent)) {
+  if (!active.active && scrollIntent) {
     active.moved = true;
     clearTimeout(active.holdTimer);
     return;
@@ -1951,6 +1964,11 @@ async function handleSignal(message) {
       const chatKind = message.kind === "gif" ? "sent a GIF" : message.kind === "media" ? "sent media" : message.text || "sent a message";
       notifyUser(message.profile?.name || message.name || "New message", chatKind, "chat");
     }
+    return;
+  }
+
+  if (message.type === "chat-reaction") {
+    updateChatReaction(message.messageId, message.reactions);
     return;
   }
 
@@ -3875,26 +3893,31 @@ function togglePeerMute(id) {
 }
 
 function startParticipantHold(event) {
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  if (event.target.closest("button, input, select, video, canvas")) return;
   const card = event.target.closest(".person");
   if (!card || card.dataset.local === "true") return;
-  const touch = event.touches[0];
   cancelParticipantHold();
-  state.longPressOrigin = { x: touch.clientX, y: touch.clientY };
+  state.longPressPointerId = event.pointerId;
+  state.longPressOrigin = { x: event.clientX, y: event.clientY };
   state.longPressTimer = setTimeout(() => {
+    state.longPressTimer = null;
     navigator.vibrate?.(18);
-    openVolumeMenu(card.dataset.id, touch.clientX, touch.clientY);
+    openVolumeMenu(card.dataset.id, event.clientX, event.clientY);
   }, 520);
 }
 
-function cancelParticipantHold(event) {
-  if (event?.type === "touchmove" && state.longPressOrigin && event.touches[0]) {
-    const touch = event.touches[0];
-    const distance = Math.hypot(touch.clientX - state.longPressOrigin.x, touch.clientY - state.longPressOrigin.y);
-    if (distance < 12) return;
-  }
+function moveParticipantHold(event) {
+  if (!state.longPressTimer || state.longPressPointerId !== event.pointerId || !state.longPressOrigin) return;
+  const distance = Math.hypot(event.clientX - state.longPressOrigin.x, event.clientY - state.longPressOrigin.y);
+  if (distance > 14) cancelParticipantHold();
+}
+
+function cancelParticipantHold() {
   clearTimeout(state.longPressTimer);
   state.longPressTimer = null;
   state.longPressOrigin = null;
+  state.longPressPointerId = null;
 }
 
 function openVolumeMenu(id, x, y) {
@@ -3913,6 +3936,7 @@ function openVolumeMenu(id, x, y) {
   updateKickAvailability();
   volumeBackdrop.hidden = false;
   document.body.classList.add("volume-open");
+  state.ignoreDocumentClickUntil = Date.now() + 350;
 
   const menuWidth = 310;
   const menuHeight = 250;
@@ -4778,6 +4802,7 @@ function addChatBubble(message) {
   const followBottom = mine || isChatNearBottom();
   const row = document.createElement("div");
   row.dataset.messageId = message.id || "";
+  row.dataset.kind = message.kind || "text";
   const richMessage = ["media", "gif"].includes(message.kind);
   row.className = `chat-entry${mine ? " mine" : ""}${richMessage ? " media-entry" : ""}`;
 
@@ -4799,6 +4824,7 @@ function addChatBubble(message) {
     appendLinkedText(bubble, message.text || "");
   }
   row.append(avatar, bubble);
+  renderChatReactions(row, message.reactions);
   chatLog.append(row);
   trimChatDisplay();
   if (followBottom) {
@@ -4814,6 +4840,95 @@ function addChatBubble(message) {
     state.chatUnread = Math.min(99, state.chatUnread + 1);
     updateChatJumpButton();
   }
+}
+
+function startChatReactionHold(event) {
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  if (event.target.closest("a, button, input, select, video")) return;
+  const row = event.target.closest(".chat-entry");
+  if (!row || row.dataset.kind !== "text" || !row.dataset.messageId) return;
+  closeReactionMenu();
+  state.chatHoldPointerId = event.pointerId;
+  state.chatHoldOrigin = { x: event.clientX, y: event.clientY };
+  state.chatHoldTimer = setTimeout(() => {
+    state.chatHoldTimer = null;
+    navigator.vibrate?.(12);
+    openReactionMenu(row.dataset.messageId, event.clientX, event.clientY);
+  }, 480);
+}
+
+function moveChatReactionHold(event) {
+  if (!state.chatHoldTimer || state.chatHoldPointerId !== event.pointerId || !state.chatHoldOrigin) return;
+  const distance = Math.hypot(event.clientX - state.chatHoldOrigin.x, event.clientY - state.chatHoldOrigin.y);
+  if (distance > 12) cancelChatReactionHold();
+}
+
+function cancelChatReactionHold() {
+  clearTimeout(state.chatHoldTimer);
+  state.chatHoldTimer = null;
+  state.chatHoldOrigin = null;
+  state.chatHoldPointerId = null;
+}
+
+function openReactionMenu(messageId, x, y) {
+  state.activeReactionMessageId = messageId;
+  reactionMenu.hidden = false;
+  state.ignoreDocumentClickUntil = Date.now() + 350;
+  const menuWidth = 112;
+  const menuHeight = 48;
+  reactionMenu.style.left = `${Math.max(8, Math.min(x - menuWidth / 2, window.innerWidth - menuWidth - 8))}px`;
+  reactionMenu.style.top = `${Math.max(8, Math.min(y - menuHeight - 10, window.innerHeight - menuHeight - 8))}px`;
+}
+
+function closeReactionMenu() {
+  reactionMenu.hidden = true;
+  state.activeReactionMessageId = "";
+}
+
+function handleReactionMenuClick(event) {
+  const button = event.target.closest("[data-reaction]");
+  if (!button || !state.activeReactionMessageId) return;
+  send({
+    type: "chat-reaction",
+    messageId: state.activeReactionMessageId,
+    reaction: button.dataset.reaction
+  });
+  closeReactionMenu();
+}
+
+function updateChatReaction(messageId, reactions) {
+  const row = chatLog.querySelector(`[data-message-id="${CSS.escape(String(messageId || ""))}"]`);
+  if (!row) return;
+  renderChatReactions(row, reactions);
+}
+
+function renderChatReactions(row, reactions) {
+  const bubble = row.querySelector(".bubble");
+  if (!bubble) return;
+  bubble.querySelector(".message-reactions")?.remove();
+  const up = reactionCount(reactions?.up);
+  const down = reactionCount(reactions?.down);
+  if (!up && !down) return;
+  const wrap = document.createElement("div");
+  wrap.className = "message-reactions";
+  if (up) wrap.append(createReactionPill("👍", up, reactionHasMe(reactions?.up)));
+  if (down) wrap.append(createReactionPill("👎", down, reactionHasMe(reactions?.down)));
+  bubble.append(wrap);
+}
+
+function reactionCount(value) {
+  return Array.isArray(value) ? value.length : Math.max(0, Number(value) || 0);
+}
+
+function reactionHasMe(value) {
+  return Array.isArray(value) && value.includes(state.username);
+}
+
+function createReactionPill(icon, count, active) {
+  const pill = document.createElement("span");
+  pill.className = `reaction-pill${active ? " active" : ""}`;
+  pill.textContent = `${icon} ${count}`;
+  return pill;
 }
 
 function trimChatDisplay() {
