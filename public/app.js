@@ -679,7 +679,7 @@ function startLiquidPointerStretch(event) {
     y: 0,
     scaleX: 1,
     scaleY: 1,
-    holdTimer: setTimeout(() => activateLiquidPointerStretch(event.pointerId), 135)
+    holdTimer: setTimeout(() => activateLiquidPointerStretch(event.pointerId), 70)
   };
 }
 
@@ -704,8 +704,8 @@ function updateLiquidPointerStretch(event) {
   if (!active || active.pointerId !== event.pointerId || active.element.isConnected === false) return;
   const rawDx = event.clientX - active.startX;
   const rawDy = event.clientY - active.startY;
-  const distance = Math.hypot(rawDx, rawDy);
-  if (!active.active && distance > 9) {
+  const chatScrollIntent = active.element.closest(".chat-log") && Math.abs(rawDy) > 12 && Math.abs(rawDy) > Math.abs(rawDx) * 1.4;
+  if (!active.active && chatScrollIntent) {
     active.moved = true;
     clearTimeout(active.holdTimer);
     return;
@@ -714,14 +714,14 @@ function updateLiquidPointerStretch(event) {
   event.preventDefault();
   const maxX = Math.min(14, active.width * 0.055);
   const maxY = Math.min(10, active.height * 0.08);
-  const dx = Math.max(-maxX, Math.min(maxX, rawDx * 0.14));
-  const dy = Math.max(-maxY, Math.min(maxY, rawDy * 0.14));
-  const stretchX = 1 + Math.min(0.038, Math.abs(dx) / Math.max(160, active.width * 4));
-  const stretchY = 1 + Math.min(0.032, Math.abs(dy) / Math.max(160, active.height * 5));
-  active.x += (dx - active.x) * 0.22;
-  active.y += (dy - active.y) * 0.22;
-  active.scaleX += (stretchX - active.scaleX) * 0.20;
-  active.scaleY += ((Math.max(0.972, 1 / stretchY)) - active.scaleY) * 0.20;
+  const dx = Math.max(-maxX, Math.min(maxX, rawDx * 0.16));
+  const dy = Math.max(-maxY, Math.min(maxY, rawDy * 0.16));
+  const stretchX = 1 + Math.min(0.045, Math.abs(dx) / Math.max(150, active.width * 3.6));
+  const stretchY = 1 + Math.min(0.038, Math.abs(dy) / Math.max(150, active.height * 4.4));
+  active.x += (dx - active.x) * 0.14;
+  active.y += (dy - active.y) * 0.14;
+  active.scaleX += (stretchX - active.scaleX) * 0.14;
+  active.scaleY += ((Math.max(0.968, 1 / stretchY)) - active.scaleY) * 0.14;
   active.element.style.setProperty("--liquid-x", `${active.x.toFixed(2)}px`);
   active.element.style.setProperty("--liquid-y", `${active.y.toFixed(2)}px`);
   active.element.style.setProperty("--liquid-scale-x", active.scaleX.toFixed(4));
@@ -4278,7 +4278,14 @@ function setSpeaking(id, speaking) {
   const card = state.cards.get(id);
   if (!card) return;
 
+  const wasSpeaking = card.classList.contains("speaking");
   card.classList.toggle("speaking", speaking);
+  if (speaking) {
+    card.classList.remove("speaking-ended");
+  } else if (wasSpeaking) {
+    card.classList.add("speaking-ended");
+    setTimeout(() => card.classList.remove("speaking-ended"), 420);
+  }
   if (speaking) {
     card.querySelector(".tag").textContent = "talking";
   } else if (card.dataset.muted === "true") {
