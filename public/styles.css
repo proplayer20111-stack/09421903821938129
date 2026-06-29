@@ -81,6 +81,7 @@ body[data-accent="orange"] {
 
 html {
   min-height: 100%;
+  min-height: 100dvh;
   overflow-x: hidden;
 }
 
@@ -88,6 +89,7 @@ body {
   position: relative;
   isolation: isolate;
   min-height: 100%;
+  min-height: 100dvh;
   width: 100%;
   margin: 0;
   overflow-x: hidden;
@@ -121,6 +123,7 @@ body::before {
     linear-gradient(135deg, #e0f2fe, #f8fafc 42%, #ede9fe);
   background-size: cover, auto, auto, auto, auto;
   background-position: center;
+  background-repeat: no-repeat;
 }
 
 html.theme-transitioning::view-transition-old(root) {
@@ -212,14 +215,20 @@ body > * {
 
 body[data-theme="liquid"]::before,
 body[data-theme="liquid-black"]::before {
+  inset: -10vmax;
   opacity: 1;
   filter: blur(6px) saturate(1.12);
-  transform: scale(1.015);
+  transform: translateZ(0) scale(1.02);
+  background-attachment: fixed, fixed, fixed, fixed, fixed;
+  background-size: cover, 80vmax 80vmax, 78vmax 78vmax, 88vmax 88vmax, cover;
+  will-change: transform;
 }
 
 body[data-theme="liquid"]::after,
 body[data-theme="liquid-black"]::after {
+  inset: -6vmax;
   opacity: 1;
+  background-attachment: fixed, fixed;
 }
 
 button,
