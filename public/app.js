@@ -411,10 +411,15 @@ document.addEventListener("pointerdown", startLiquidPointerStretch, { passive: f
 document.addEventListener("pointermove", updateLiquidPointerStretch, { passive: false });
 document.addEventListener("pointerup", finishLiquidPointerStretch, { passive: false });
 document.addEventListener("pointercancel", finishLiquidPointerStretch, { passive: false });
+document.addEventListener("wheel", blockLiquidDragScroll, { passive: false });
 document.addEventListener("gesturestart", preventMobileZoom, { passive: false });
 document.addEventListener("gesturechange", preventMobileZoom, { passive: false });
 document.addEventListener("gestureend", preventMobileZoom, { passive: false });
 document.addEventListener("touchmove", (event) => {
+  if (isLiquidDragActive()) {
+    event.preventDefault();
+    return;
+  }
   if (event.touches.length > 1) event.preventDefault();
 }, { passive: false });
 document.addEventListener("touchend", (event) => {
@@ -494,6 +499,14 @@ function preventMobileZoom(event) {
   if (state.deviceType === "mobile" || matchMedia("(max-width: 760px)").matches) {
     event.preventDefault();
   }
+}
+
+function isLiquidDragActive() {
+  return Boolean(state.liquidPointer?.active);
+}
+
+function blockLiquidDragScroll(event) {
+  if (isLiquidDragActive()) event.preventDefault();
 }
 
 function blockClipboardAction(event) {

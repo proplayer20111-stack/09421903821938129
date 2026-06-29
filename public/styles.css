@@ -426,9 +426,13 @@ body[data-theme="liquid-black"] .chat-log {
 }
 
 body.liquid-dragging,
-body.liquid-dragging .chat-log {
+body.liquid-dragging .chat-log,
+body.liquid-dragging .gif-grid,
+body.liquid-dragging .people,
+body.liquid-dragging .youtube-queue {
   overscroll-behavior: none;
   scroll-behavior: auto;
+  touch-action: none;
 }
 
 body.liquid-dragging {
@@ -437,6 +441,13 @@ body.liquid-dragging {
   width: 100%;
   overflow: hidden;
   touch-action: none;
+}
+
+body.liquid-dragging .chat-log,
+body.liquid-dragging .gif-grid,
+body.liquid-dragging .people,
+body.liquid-dragging .youtube-queue {
+  overflow: hidden !important;
 }
 
 body[data-theme="liquid"] .chat-entry,
