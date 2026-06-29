@@ -259,8 +259,8 @@ const SCREEN_RELAY_MAX_BUFFERED_BYTES = 512 * 1024;
 const SCREEN_SHARING_ENABLED = false;
 const MOBILE_CALL_HEALTH_INTERVAL_MS = 12000;
 const DESKTOP_CALL_HEALTH_INTERVAL_MS = 6000;
-const MOBILE_METER_INTERVAL_MS = 140;
-const DESKTOP_METER_INTERVAL_MS = 55;
+const MOBILE_METER_INTERVAL_MS = 65;
+const DESKTOP_METER_INTERVAL_MS = 38;
 const MOBILE_YOUTUBE_TIMER_MS = 1000;
 const DESKTOP_YOUTUBE_TIMER_MS = 500;
 let lastMobileTouchEnd = 0;
@@ -404,6 +404,9 @@ document.addEventListener("click", (event) => {
   if (!volumeBackdrop.hidden && !volumeMenu.contains(event.target) && event.target !== volumeBackdrop) closeVolumeMenu();
   if (!reactionMenu.hidden && !reactionMenu.contains(event.target)) closeReactionMenu();
 });
+document.addEventListener("copy", blockClipboardAction);
+document.addEventListener("cut", blockClipboardAction);
+document.addEventListener("paste", blockClipboardAction);
 document.addEventListener("pointerdown", startLiquidPointerStretch, { passive: false });
 document.addEventListener("pointermove", updateLiquidPointerStretch, { passive: false });
 document.addEventListener("pointerup", finishLiquidPointerStretch, { passive: false });
@@ -491,6 +494,11 @@ function preventMobileZoom(event) {
   if (state.deviceType === "mobile" || matchMedia("(max-width: 760px)").matches) {
     event.preventDefault();
   }
+}
+
+function blockClipboardAction(event) {
+  event.preventDefault();
+  showToast("copy and paste disabled");
 }
 
 function syncVisualViewport() {
@@ -4324,19 +4332,19 @@ function setupLocalAudioMeter() {
     state.analyser.getByteFrequencyData(samples);
     const average = samples.reduce((sum, value) => sum + value, 0) / samples.length;
     const now = Date.now();
-    const activeVoice = average > 17 && !state.muted;
+    const activeVoice = average > 13 && !state.muted;
     if (activeVoice) {
       if (!state.voiceStartAt) state.voiceStartAt = now;
       state.lastVoiceAt = now;
-      state.speakingEnergy = Math.min(4, state.speakingEnergy + 1);
+      state.speakingEnergy = Math.min(5, state.speakingEnergy + 1.9);
     } else {
       state.voiceStartAt = 0;
-      state.speakingEnergy = Math.max(0, state.speakingEnergy - 1.4);
+      state.speakingEnergy = Math.max(0, state.speakingEnergy - 1.15);
     }
-    const started = activeVoice && (state.speakingEnergy >= 1.5 || now - state.voiceStartAt > 80);
-    const recentlyActive = now - state.lastVoiceAt < 380;
-    const speaking = state.ttsSpeakerId === state.id || started || (state.lastSpeaking && recentlyActive && state.speakingEnergy > 0.4);
-    const heartbeatDue = speaking && now - state.lastSpeakingSentAt > 900;
+    const started = activeVoice && (average > 19 || state.speakingEnergy >= 1.4 || now - state.voiceStartAt > 35);
+    const recentlyActive = now - state.lastVoiceAt < 260;
+    const speaking = state.ttsSpeakerId === state.id || started || (state.lastSpeaking && recentlyActive && state.speakingEnergy > 0.25);
+    const heartbeatDue = speaking && now - state.lastSpeakingSentAt > 650;
     if (speaking !== state.lastSpeaking || heartbeatDue) {
       state.lastSpeaking = speaking;
       state.lastSpeakingSentAt = now;
