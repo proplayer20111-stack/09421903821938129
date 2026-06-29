@@ -233,7 +233,8 @@ const state = {
   titleTimer: null,
   liquidPointer: null,
   speakingEnergy: 0,
-  lastVoiceAt: 0
+  lastVoiceAt: 0,
+  voiceStartAt: 0
 };
 
 const rtcConfig = {
@@ -247,7 +248,7 @@ const SCREEN_RELAY_MAX_BUFFERED_BYTES = 512 * 1024;
 const SCREEN_SHARING_ENABLED = false;
 const MOBILE_CALL_HEALTH_INTERVAL_MS = 12000;
 const DESKTOP_CALL_HEALTH_INTERVAL_MS = 6000;
-const MOBILE_METER_INTERVAL_MS = 260;
+const MOBILE_METER_INTERVAL_MS = 140;
 const DESKTOP_METER_INTERVAL_MS = 55;
 const MOBILE_YOUTUBE_TIMER_MS = 1000;
 const DESKTOP_YOUTUBE_TIMER_MS = 500;
@@ -679,6 +680,8 @@ function startLiquidPointerStretch(event) {
     y: 0,
     scaleX: 1,
     scaleY: 1,
+    scrollX: window.scrollX,
+    scrollY: window.scrollY,
     holdTimer: setTimeout(() => activateLiquidPointerStretch(event.pointerId), 70)
   };
 }
@@ -692,6 +695,7 @@ function activateLiquidPointerStretch(pointerId) {
   } catch {
   }
   document.body.classList.add("liquid-dragging");
+  document.body.style.setProperty("--liquid-scroll-y", `-${active.scrollY}px`);
   active.element.classList.add("liquid-held");
   active.element.style.setProperty("--liquid-x", "0px");
   active.element.style.setProperty("--liquid-y", "0px");
@@ -735,8 +739,11 @@ function finishLiquidPointerStretch(event) {
   if (active.active) event.preventDefault();
   state.liquidPointer = null;
   const element = active.element;
+  if (!active.active) return;
   document.body.classList.remove("liquid-dragging");
-  if (!element?.isConnected || !active.active) return;
+  document.body.style.removeProperty("--liquid-scroll-y");
+  window.scrollTo(active.scrollX, active.scrollY);
+  if (!element?.isConnected) return;
   try {
     element.releasePointerCapture?.(event.pointerId);
   } catch {
@@ -4142,6 +4149,7 @@ function resetLocalCall(showMessage = true) {
   state.lastSpeaking = false;
   state.speakingEnergy = 0;
   state.lastVoiceAt = 0;
+  state.voiceStartAt = 0;
   muteButton.setAttribute("aria-pressed", "false");
   muteButton.textContent = "mute";
   muteButton.disabled = false;
@@ -4235,13 +4243,20 @@ function setupLocalAudioMeter() {
     state.analyser.getByteFrequencyData(samples);
     const average = samples.reduce((sum, value) => sum + value, 0) / samples.length;
     const now = Date.now();
-    const activeVoice = average > 18 && !state.muted;
-    state.speakingEnergy = activeVoice
-      ? Math.min(6, state.speakingEnergy + 1.4)
-      : Math.max(0, state.speakingEnergy - 1);
-    if (activeVoice) state.lastVoiceAt = now;
-    const speaking = state.ttsSpeakerId === state.id || (state.speakingEnergy >= 2.6 && now - state.lastVoiceAt < 900);
-    if (speaking !== state.lastSpeaking || now - state.lastSpeakingSentAt > 700) {
+    const activeVoice = average > 17 && !state.muted;
+    if (activeVoice) {
+      if (!state.voiceStartAt) state.voiceStartAt = now;
+      state.lastVoiceAt = now;
+      state.speakingEnergy = Math.min(4, state.speakingEnergy + 1);
+    } else {
+      state.voiceStartAt = 0;
+      state.speakingEnergy = Math.max(0, state.speakingEnergy - 1.4);
+    }
+    const started = activeVoice && (state.speakingEnergy >= 1.5 || now - state.voiceStartAt > 80);
+    const recentlyActive = now - state.lastVoiceAt < 380;
+    const speaking = state.ttsSpeakerId === state.id || started || (state.lastSpeaking && recentlyActive && state.speakingEnergy > 0.4);
+    const heartbeatDue = speaking && now - state.lastSpeakingSentAt > 900;
+    if (speaking !== state.lastSpeaking || heartbeatDue) {
       state.lastSpeaking = speaking;
       state.lastSpeakingSentAt = now;
       setSpeaking(state.id, speaking);
@@ -4260,6 +4275,7 @@ function stopAudioMeter() {
   state.meterTimer = null;
   state.speakingEnergy = 0;
   state.lastVoiceAt = 0;
+  state.voiceStartAt = 0;
   if (state.lastSpeaking) {
     state.lastSpeaking = false;
     state.lastSpeakingSentAt = Date.now();

@@ -358,6 +358,14 @@ body.liquid-dragging .chat-log {
   scroll-behavior: auto;
 }
 
+body.liquid-dragging {
+  position: fixed;
+  inset: var(--liquid-scroll-y, 0) 0 auto 0;
+  width: 100%;
+  overflow: hidden;
+  touch-action: none;
+}
+
 body[data-theme="liquid"] .chat-entry,
 body[data-theme="liquid-black"] .chat-entry {
   position: relative;
@@ -555,6 +563,41 @@ body[data-theme="liquid-black"] .person.in-call {
     inset 0 1px 0 rgba(255, 255, 255, 0.36),
     0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent),
     var(--shadow-soft);
+}
+
+body[data-theme="liquid"] .chat-entry,
+body[data-theme="liquid-black"] .chat-entry {
+  animation: liquid-message-in 260ms cubic-bezier(0.18, 0.9, 0.2, 1.18);
+}
+
+body[data-theme="liquid"] .youtube-live-dot,
+body[data-theme="liquid-black"] .youtube-live-dot {
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent),
+    0 0 18px color-mix(in srgb, var(--accent) 42%, transparent);
+}
+
+body[data-theme="liquid"] input[type="range"],
+body[data-theme="liquid-black"] input[type="range"] {
+  accent-color: color-mix(in srgb, var(--accent-fill) 82%, white 18%);
+  filter: drop-shadow(0 6px 14px rgba(15, 23, 42, 0.14));
+}
+
+body[data-theme="liquid"] .online-count,
+body[data-theme="liquid-black"] .online-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+body[data-theme="liquid"] .online-count::before,
+body[data-theme="liquid-black"] .online-count::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent-fill);
+  box-shadow: 0 0 16px color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
 .app-box {
@@ -1821,6 +1864,26 @@ body[data-theme="liquid-black"] {
 
   100% {
     transform: scale(1);
+  }
+}
+
+@keyframes liquid-message-in {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.982);
+    filter: blur(2px);
+  }
+
+  70% {
+    opacity: 1;
+    transform: translateY(-1px) scale(1.006);
+    filter: blur(0);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
   }
 }
 
